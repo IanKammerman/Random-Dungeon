@@ -61,7 +61,8 @@ Weather API (NOAA/weather.gov API): Hard to manipulate, random and unpredictable
 
 ### VRF
 
-TODO: which VRF, keying model.
+Elliptic Curve Verifiable Random Function + SNARK
+We compute the VRF normally, then use a SNARK to prove that computation was done correctly, turning the VRF into a composable, private, and programmable building block.
 
 ### Contribution Protocol
 
