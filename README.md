@@ -65,8 +65,9 @@ TODO: which VRF, keying model.
 
 ### Contribution Protocol
 
-TODO: commit-reveal spec, non-revealer fallback.
+The beacon's baseline entropy comes from the oracle. Any Solana wallet may additionally contribute entropy to an epoch via a commit-reveal scheme. Contributions are optional, the beacon finalizes with or without them, but allow consumers to reduce their trust in the oracle: a contributor who keeps their `r_i` secret until reveal has cryptographic assurance that the epoch's output incorporates their own randomness, regardless of the oracle's behavior.
 
+Participants do not pre-register. To contribute to epoch `t`, a wallet submits a `participant_commit` transaction during epoch `t`'s commit phase and a `participant_reveal` transaction during the reveal phase.
 ### Epoch Timing
 
 Each epoch runs for approximately 5–10 minutes in the MVP, with an optimization target of 1–2 minutes. An epoch consists of three phases:
