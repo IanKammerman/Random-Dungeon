@@ -18,9 +18,13 @@ TODO: high-level description of how the system works end-to-end.
 
 TODO: on-chain program, off-chain oracle, contribution protocol.
 
+The off-chain oracle service submits entropy seeds to the Solana program via a Helius RPC endpoint, which provides reliable transaction submission and devnet/mainnet access without running a full validator. The RPC URL is configured via the `SOLANA_RPC_URL` environment variable so providers can be swapped without code changes.
+
 ### Entropy Sources
 
-TODO: which sources, why.
+NASA API: Sun spots cant be controlled by any person, and its through NASA which is a reliable source.
+Weather API (NOAA/weather.gov API): Hard to manipulate, random and unpredictable.
+
 
 ### VRF
 
