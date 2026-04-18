@@ -1,0 +1,5 @@
+# Anchor.toml — placeholder
+#
+# This file will be populated by `anchor init` or filled in manually later.
+# Expected sections include [features], [programs.localnet], [programs.devnet],
+# [registry], [provider], [scripts], and [test].

@@ -1,0 +1,7 @@
+# programs/randomness-beacon/Cargo.toml — placeholder
+#
+# To be populated later with:
+#   [package]        — name, version, edition
+#   [lib]            — crate-type = ["cdylib", "lib"], name = "randomness_beacon"
+#   [features]       — no-entrypoint, no-idl, cpi, default
+#   [dependencies]   — anchor-lang, and any program-specific crates

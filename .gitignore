@@ -1,0 +1,27 @@
+# Rust / Anchor build artifacts
+target/
+.anchor/
+test-ledger/
+
+# Node
+node_modules/
+dist/
+
+# Environment files
+.env
+.env.local
+
+# Wallets (allow *.example.json for templates)
+wallets/*.json
+!wallets/*.example.json
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+*.log

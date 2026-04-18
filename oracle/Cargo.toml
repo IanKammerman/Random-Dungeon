@@ -1,0 +1,10 @@
+# oracle/Cargo.toml — placeholder
+#
+# Expected dependencies (to be added later):
+#   tokio          — async runtime for the oracle event loop
+#   reqwest        — HTTP client for fetching entropy from external APIs
+#   serde          — (de)serialization of API payloads and config
+#   sha2           — hashing primitives for commit/reveal
+#   solana-client  — RPC client for interacting with the Solana cluster
+#   anchor-client  — typed client for the randomness-beacon program
+#   ed25519-dalek  — signing / verification of oracle attestations
