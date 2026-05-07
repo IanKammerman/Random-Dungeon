@@ -1,14 +1,22 @@
-// oracle/src/main.rs
+mod config;
+mod entropy;
+mod epoch;
+mod error;
+mod rpc;
+mod tx;
+mod vrf;
 
-fn main() {
-    // TODO: load configuration from environment / .env (RPC URL, keypair, API keys, program ID).
-    // TODO: initialize logging / tracing.
-    // TODO: construct Solana RPC + Anchor clients and load the oracle keypair.
-    // TODO: enter the main loop:
-    //         - watch for new epochs on the randomness-beacon program
-    //         - gather entropy samples from configured EntropySource implementations
-    //         - submit `commit` for the upcoming epoch
-    //         - after the commit window closes, submit `reveal`
-    //         - submit `finalize` to publish the beacon output
-    //         - handle retries, backoff, and graceful shutdown
+use anyhow::Result;
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
+    let _cfg = config::Config::from_env()?;
+
+    // TODO: main oracle loop
+    Ok(())
 }
