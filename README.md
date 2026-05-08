@@ -64,6 +64,33 @@ Weather API (NOAA/weather.gov API): Hard to manipulate, random and unpredictable
 Elliptic Curve Verifiable Random Function + SNARK
 We compute the VRF normally, then use a SNARK to prove that computation was done correctly, turning the VRF into a composable, private, and programmable building block.
 
+### ECVRF SNARK MVP
+
+This repo now includes an MVP BN254 Groth16 pipeline under `crates/`:
+
+- `vrf-core` computes a deterministic field-based VRF-like value.
+- `vrf-circuit` proves the matching field arithmetic in R1CS.
+- `setup` generates local Arkworks proving/verifying keys or imports ceremony artifacts.
+- `prover` creates a Groth16 proof and fixed-order public inputs.
+- `verifier-client` verifies proofs locally with Arkworks.
+- `ecvrf-solana-program` wires an Anchor instruction to `groth16-solana`.
+
+The MVP intentionally does not implement full RFC 9381 ECVRF inside the circuit. It proves:
+
+```text
+h = field_hash(alpha_hash)
+gamma = sk * h
+beta = field_hash(gamma)
+```
+
+Public input order is fixed as:
+
+```text
+[alpha_hash, beta]
+```
+
+The current field hash is a compact algebraic placeholder used to keep the Rust and R1CS implementations aligned while the project pipeline is brought up. Replace it with a production Poseidon/hash-to-curve design before relying on the primitive for real randomness.
+
 ### Contribution Protocol
 
 The beacon's baseline entropy comes from the oracle. Any Solana wallet may additionally contribute entropy to an epoch via a commit-reveal scheme. Contributions are optional, the beacon finalizes with or without them, but allow consumers to reduce their trust in the oracle: a contributor who keeps their `r_i` secret until reveal has cryptographic assurance that the epoch's output incorporates their own randomness, regardless of the oracle's behavior.
@@ -107,7 +134,13 @@ TODO
 
 ## Security Considerations
 
-TODO
+The local random setup mode is for development only.
+
+Production Groth16 deployments require a ceremony. The security goal is that the toxic waste used to generate the proving and verifying keys is unknown after setup. If the toxic waste is retained, an attacker may forge proofs.
+
+The Powers of Tau phase can be reused across circuits up to a supported circuit size. The Groth16 phase 2 setup is circuit-specific and must be rerun whenever the circuit changes.
+
+Groth16 is attractive here because proofs are very small and verification is efficient, but its setup is circuit-specific.
 
 ## Why Solana
 
@@ -119,7 +152,44 @@ TODO
 
 ## Getting Started
 
-TODO: build and run instructions.
+Generate local development keys:
+
+```bash
+cargo run -p setup -- local-random
+```
+
+Prove the MVP VRF computation:
+
+```bash
+cargo run -p prover -- --sk 12345 --alpha "user supplied randomness input"
+```
+
+Verify locally:
+
+```bash
+cargo run -p verifier-client -- \
+  --proof artifacts/proof.bin \
+  --public-inputs artifacts/public_inputs.json \
+  --vk artifacts/verifying_key.bin
+```
+
+Import ceremony output after running the `snarkjs` flow in [ceremony/README.md](ceremony/README.md):
+
+```bash
+cargo run -p setup -- import-ceremony \
+  --zkey ceremony/zkey/vrf_0001.zkey \
+  --vk-json artifacts/verifying_key.json
+```
+
+Run core tests:
+
+```bash
+cargo test -p vrf-core
+cargo test -p vrf-circuit
+cargo test -p setup
+cargo test -p prover
+cargo test -p verifier-client
+```
 
 ## License
 
