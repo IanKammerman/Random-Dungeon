@@ -1,0 +1,12 @@
+[package]
+name = "vrf-circuit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-bn254 = { workspace = true }
+ark-crypto-primitives = { workspace = true, features = ["sponge", "r1cs"] }
+ark-ff = { workspace = true }
+ark-r1cs-std = { workspace = true }
+ark-relations = { workspace = true }
+vrf-core = { path = "../vrf-core" }

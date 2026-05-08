@@ -1,0 +1,18 @@
+[package]
+name = "ecvrf-solana-program"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ecvrf_solana_program"
+
+[features]
+default = []
+no-entrypoint = []
+no-idl = []
+cpi = ["no-entrypoint"]
+
+[dependencies]
+anchor-lang = { version = "0.31", features = ["init-if-needed"] }
+groth16-solana = "0.2"

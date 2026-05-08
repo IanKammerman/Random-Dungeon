@@ -15,8 +15,8 @@ path = "src/main.rs"
 randomness-beacon = { path = "../programs/randomness-beacon", features = ["no-entrypoint"] }
 
 tokio = { version = "1", features = ["full"] }
-solana-client = "1.18"
-solana-sdk = "1.18"
+solana-client = "=1.18.26"
+solana-sdk = "=1.18.26"
 anchor-client = "0.30.1"
 anchor-lang = "0.30.1"
 reqwest = { version = "0.12", features = ["json"] }
@@ -31,7 +31,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 futures = "0.3"
 hex = "0.4"
 sha2 = "0.10"
-anchor-lang = "0.30.1"
 rand = "0.8"
 
 [dev-dependencies]
