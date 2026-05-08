@@ -113,6 +113,8 @@ mod tests {
             aggregated_seed: [0u8; 32],
             vrf_output: [0u8; 32],
             is_finalized: false,
+            entropy_manifest_hash: [0u8; 32],
+            entropy_seed: [0u8; 32],
         }
     }
 

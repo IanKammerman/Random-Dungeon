@@ -1,0 +1,56 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1745000000000,
+    "title": "USGS All Earthquakes, Past Hour",
+    "count": 3
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "ci40123456",
+      "properties": {
+        "mag": 1.42,
+        "place": "5km W of Anza, CA",
+        "time": 1744999800000,
+        "updated": 1744999900000,
+        "type": "earthquake"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-116.689, 33.555, 12.34]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ak0241abc",
+      "properties": {
+        "mag": 2.1,
+        "place": "60km SE of Denali Park",
+        "time": 1744999500000,
+        "updated": 1744999600000,
+        "type": "earthquake"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-148.123, 63.456, 89.7]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "nc73987654",
+      "properties": {
+        "mag": null,
+        "place": "3km N of The Geysers, CA",
+        "time": 1744999700000,
+        "updated": 1744999750000,
+        "type": "earthquake"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.789, 38.798, 1.5]
+      }
+    }
+  ],
+  "bbox": [-148.123, 33.555, 1.5, -116.689, 63.456, 89.7]
+}
