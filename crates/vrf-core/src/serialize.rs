@@ -22,6 +22,15 @@ impl PublicInputs {
     pub fn to_field_elements(&self) -> Result<Vec<Fr>> {
         Ok(vec![fr_from_hex(&self.alpha_hash)?, fr_from_hex(&self.beta)?])
     }
+
+    pub fn to_solana_bytes(&self) -> Result<[[u8; 32]; 2]> {
+        let inputs = self.to_field_elements()?;
+        Ok([fr_to_be_bytes(&inputs[0]), fr_to_be_bytes(&inputs[1])])
+    }
+
+    pub fn to_solana_flat_bytes(&self) -> Result<Vec<u8>> {
+        Ok(self.to_solana_bytes()?.into_iter().flatten().collect())
+    }
 }
 
 pub fn fr_to_hex(value: &Fr) -> String {
@@ -36,4 +45,3 @@ pub fn fr_from_hex(value: &str) -> Result<Fr> {
     }
     Ok(Fr::from_be_bytes_mod_order(&bytes))
 }
-

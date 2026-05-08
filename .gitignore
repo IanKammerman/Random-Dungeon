@@ -2,18 +2,51 @@
 target/
 .anchor/
 test-ledger/
+*.so
+*.dylib
+*.dll
+*.rlib
+*.rmeta
+*.dSYM/
+
+# Solana / Anchor deploy outputs
+deploy/
+*.keypair
+*.json
+!*.example.json
+!package.json
+!tsconfig.json
 
 # Node
 node_modules/
 dist/
+build/
 
 # Environment files
 .env
 .env.local
+.env.*
+!.env.example
 
 # Wallets (allow *.example.json for templates)
 wallets/*.json
 !wallets/*.example.json
+
+# Generated SNARK artifacts
+artifacts/*
+!artifacts/.gitkeep
+ceremony/ptau/*
+ceremony/zkey/*
+ceremony/transcripts/*
+!ceremony/ptau/.gitkeep
+!ceremony/zkey/.gitkeep
+!ceremony/transcripts/.gitkeep
+*.ptau
+*.zkey
+*.r1cs
+*.sym
+*.wtns
+*.wasm
 
 # Editors
 .vscode/

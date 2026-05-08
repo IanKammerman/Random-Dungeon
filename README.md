@@ -164,6 +164,16 @@ Prove the MVP VRF computation:
 cargo run -p prover -- --sk 12345 --alpha "user supplied randomness input"
 ```
 
+This writes both Arkworks-local verification files and Solana-ready byte files:
+
+```text
+artifacts/proof.bin                  # compressed Arkworks proof for verifier-client
+artifacts/public_inputs.json          # hex public inputs for verifier-client
+artifacts/proof_solana.bin            # 256 bytes: -A || B || C for groth16-solana
+artifacts/public_inputs_solana.json   # [[u8; 32]; 2] in [alpha_hash, beta] order
+artifacts/public_inputs_solana.bin    # 64 bytes: alpha_hash || beta
+```
+
 Verify locally:
 
 ```bash

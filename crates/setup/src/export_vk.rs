@@ -70,10 +70,10 @@ fn g2_to_bytes(point: &G2Affine) -> [u8; 128] {
     let y0 = fq_to_be_bytes(&point.y.c0);
     let y1 = fq_to_be_bytes(&point.y.c1);
     let mut out = [0u8; 128];
-    out[..32].copy_from_slice(&x0);
-    out[32..64].copy_from_slice(&x1);
-    out[64..96].copy_from_slice(&y0);
-    out[96..].copy_from_slice(&y1);
+    out[..32].copy_from_slice(&x1);
+    out[32..64].copy_from_slice(&x0);
+    out[64..96].copy_from_slice(&y1);
+    out[96..].copy_from_slice(&y0);
     out
 }
 
