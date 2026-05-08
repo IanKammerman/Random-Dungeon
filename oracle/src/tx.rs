@@ -189,33 +189,19 @@ mod tests {
     }
 
     #[test]
-<<<<<<< HEAD
     fn build_reveal_instruction_has_correct_accounts() {
-=======
-    fn build_finalize_instruction_encodes_output_proof_and_public_inputs() {
->>>>>>> bde1147998f6618e52a9621825c3efebe35ec230
         let payer = Keypair::new();
         let program_id = Pubkey::new_unique();
         let epoch_state = Pubkey::new_unique();
         let rpc = MockRpc;
 
         let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
-<<<<<<< HEAD
         let seed = [0xAA; 32];
         let ix = builder.build_reveal_instruction(seed);
-=======
-        let vrf_output = VrfOutput {
-            output: [0x11; 32],
-            proof: vec![0x22; 256],
-            public_inputs: vec![[0x33; 32], [0x11; 32]],
-        };
-        let ix = builder.build_finalize_instruction(&vrf_output);
->>>>>>> bde1147998f6618e52a9621825c3efebe35ec230
 
         assert_eq!(ix.program_id, program_id);
         assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
         assert!(ix.accounts[0].is_signer);
-<<<<<<< HEAD
         assert!(ix.accounts[0].is_writable);
         assert_eq!(ix.accounts[1].pubkey, epoch_state);
         assert!(ix.accounts[1].is_writable);
@@ -247,10 +233,32 @@ mod tests {
         let rpc = MockRpc;
 
         let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
-        let commit_state = CommitState { epoch_id: 1, salt: [0xFF; 32] };
+        let commit_state = CommitState {
+            epoch_id: 1,
+            salt: [0xFF; 32],
+        };
         let sig = builder.send_reveal(&commit_state).await.unwrap();
         assert_eq!(sig, Signature::default());
-=======
+    }
+
+    #[test]
+    fn build_finalize_instruction_encodes_output_proof_and_public_inputs() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let vrf_output = VrfOutput {
+            output: [0x11; 32],
+            proof: vec![0x22; 256],
+            public_inputs: vec![[0x33; 32], [0x11; 32]],
+        };
+        let ix = builder.build_finalize_instruction(&vrf_output);
+
+        assert_eq!(ix.program_id, program_id);
+        assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
+        assert!(ix.accounts[0].is_signer);
         assert_eq!(ix.accounts[1].pubkey, epoch_state);
 
         let expected = randomness_beacon::instruction::FinalizeEpoch {
@@ -260,6 +268,5 @@ mod tests {
         }
         .data();
         assert_eq!(ix.data, expected);
->>>>>>> bde1147998f6618e52a9621825c3efebe35ec230
     }
 }

@@ -14,7 +14,6 @@ use solana_sdk::{
 
 use randomness_beacon::{EpochPhase, EpochState};
 
-
 struct BanksRpcAdapter {
     banks: tokio::sync::Mutex<solana_program_test::BanksClient>,
 }
@@ -193,14 +192,12 @@ async fn send_commit_stores_commitment_on_chain() {
     let salt = [42u8; 32];
     let commitment = oracle::epoch::commitment_hash(&salt);
 
-    let tx_builder = oracle::tx::TxBuilder::new(
-        &adapter,
-        &payer_copy,
-        program_id,
-        epoch_state_pda,
-    );
+    let tx_builder = oracle::tx::TxBuilder::new(&adapter, &payer_copy, program_id, epoch_state_pda);
 
-    let sig = tx_builder.send_commit(commitment).await.expect("send_commit failed");
+    let sig = tx_builder
+        .send_commit(commitment)
+        .await
+        .expect("send_commit failed");
     assert_ne!(sig, Signature::default());
 
     // Read back and verify the commitment was stored
@@ -255,19 +252,18 @@ async fn commit_reveal_submission_succeeds() {
     let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
 
     // --- Commit phase: submit commitment ---
-    let commit_state = oracle::epoch::CommitState { epoch_id, salt: [0x42; 32] };
+    let commit_state = oracle::epoch::CommitState {
+        epoch_id,
+        salt: [0x42; 32],
+    };
     let commitment = commit_state.commitment();
 
     let adapter = Arc::new(BanksRpcAdapter {
         banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
     });
 
-    let tx_builder = oracle::tx::TxBuilder::new(
-        adapter.as_ref(),
-        &payer,
-        program_id,
-        epoch_state_pda,
-    );
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
 
     let commit_sig = tx_builder
         .send_commit(commitment)

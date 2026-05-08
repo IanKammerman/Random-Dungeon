@@ -19,8 +19,7 @@ async fn main() -> Result<()> {
 
     let keypair_bytes = std::fs::read(&cfg.keypair_path)
         .with_context(|| format!("failed to read keypair from {:?}", cfg.keypair_path))?;
-    let payer = Keypair::from_bytes(&keypair_bytes)
-        .context("invalid keypair bytes")?;
+    let payer = Keypair::from_bytes(&keypair_bytes).context("invalid keypair bytes")?;
 
     let rpc = SolanaRpc::new(&cfg, Keypair::from_bytes(&keypair_bytes)?);
 
@@ -29,10 +28,8 @@ async fn main() -> Result<()> {
         .parse::<u64>()
         .context("EPOCH_ID is not a valid u64")?;
 
-    let (epoch_state_address, _bump) = Pubkey::find_program_address(
-        &[b"epoch", &epoch_id.to_le_bytes()],
-        &cfg.program_id,
-    );
+    let (epoch_state_address, _bump) =
+        Pubkey::find_program_address(&[b"epoch", &epoch_id.to_le_bytes()], &cfg.program_id);
 
     let monitor = EpochMonitor::new(&rpc, epoch_state_address);
 
@@ -49,7 +46,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!(epoch_id, "epoch is in commit phase, generating salt and submitting commitment");
+    info!(
+        epoch_id,
+        "epoch is in commit phase, generating salt and submitting commitment"
+    );
 
     let commit_state = CommitState::new(epoch_id);
     let commitment = commit_state.commitment();
