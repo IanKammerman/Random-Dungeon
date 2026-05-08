@@ -107,4 +107,7 @@ pub struct EpochState {
     pub aggregated_seed: [u8; 32],
     pub vrf_output: [u8; 32],
     pub is_finalized: bool,
+    // --- new fields for the entropy module ---
+    pub entropy_manifest_hash: [u8; 32],
+    pub entropy_seed: [u8; 32],
 }
