@@ -34,8 +34,10 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub async fn read_epoch_state(&self) -> Result<randomness_beacon::EpochState> {
-        let data = self.rpc.get_account_data(&self.epoch_state_address).await?;
+        use crate::rpc::RpcProvider;
         use anchor_lang::AnchorDeserialize;
+        let data = self.rpc.get_account_data(&self.epoch_state_address).await?
+            .ok_or_else(|| anyhow::anyhow!("epoch state account not found"))?;
         let state = randomness_beacon::EpochState::deserialize(&mut &data[8..])?;
         Ok(state)
     }
