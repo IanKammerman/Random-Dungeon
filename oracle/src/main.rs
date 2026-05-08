@@ -59,5 +59,13 @@ async fn main() -> Result<()> {
 
     info!(%sig, "oracle_commit transaction confirmed");
 
+    info!(epoch_id, "waiting for reveal phase");
+    monitor.wait_for_phase(EpochPhase::Reveal).await?;
+
+    info!(epoch_id, "epoch is in reveal phase, submitting salt");
+    let sig = tx_builder.send_reveal(&commit_state).await?;
+
+    info!(%sig, "oracle_reveal transaction confirmed");
+
     Ok(())
 }

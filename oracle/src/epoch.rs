@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use solana_sdk::pubkey::Pubkey;
 
@@ -5,6 +7,9 @@ use randomness_beacon::EpochPhase;
 use randomness_beacon::EpochState;
 
 use crate::rpc::RpcProvider;
+
+const PHASE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const PHASE_POLL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Held in memory across the commit→reveal transition for a single epoch.
 /// If the oracle process restarts, this is lost and the epoch's reveal cannot
@@ -69,11 +74,28 @@ impl<'a, R: RpcProvider + ?Sized> EpochMonitor<'a, R> {
         Ok(Some(derive_phase(&state, current_slot)))
     }
 
-    pub async fn wait_for_phase(&self, _target: EpochPhase) -> Result<EpochState> {
-        // TODO: poll until the on-chain phase matches target
-        self.read_epoch_state()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("epoch state account does not exist"))
+    pub async fn wait_for_phase(&self, target: EpochPhase) -> Result<EpochState> {
+        let deadline = tokio::time::Instant::now() + PHASE_POLL_TIMEOUT;
+        loop {
+            let state = self
+                .read_epoch_state()
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("epoch state account does not exist"))?;
+            let current_slot = self.rpc.get_slot().await?;
+            let current_phase = derive_phase(&state, current_slot);
+            if current_phase == target {
+                return Ok(state);
+            }
+            if tokio::time::Instant::now() + PHASE_POLL_INTERVAL > deadline {
+                anyhow::bail!(
+                    "timed out waiting for {:?} phase (current: {:?}, slot: {})",
+                    target,
+                    current_phase,
+                    current_slot
+                );
+            }
+            tokio::time::sleep(PHASE_POLL_INTERVAL).await;
+        }
     }
 }
 
