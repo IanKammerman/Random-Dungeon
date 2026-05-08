@@ -11,6 +11,7 @@ pub struct VrfKeyPair {
 pub struct VrfOutput {
     pub output: [u8; 32],
     pub proof: Vec<u8>,
+    pub public_inputs: Vec<[u8; 32]>,
 }
 
 impl VrfKeyPair {

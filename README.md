@@ -34,14 +34,14 @@ The deployed program is the verifier and record of truth. It does not fetch data
 **Enforced logic**
 - Phase transitions by slot number
 - Commitment verification (reveal must hash to commitment)
-- VRF proof verification via Solana's ed25519 precompile
+- SNARK VRF proof verification on-chain via `groth16-solana`
 - Seed aggregation over valid reveals; non-revealers dropped
 
 ### Off-chain Oracle
 
 The off-chain oracle service submits entropy seeds to the Solana program via a Helius RPC endpoint, which provides reliable transaction submission and devnet/mainnet access without running a full validator. The RPC URL is configured via the `SOLANA_RPC_URL` environment variable so providers can be swapped without code changes.
 
-A service we run that translates real-world data into on-chain submissions. Holds the ed25519 VRF keypair.
+A service we run that translates real-world data into on-chain submissions. It owns the VRF secret material off-chain and submits proof data to the on-chain verifier.
 
 **Per-epoch flow**
 1. Detect new epoch via RPC
@@ -73,7 +73,8 @@ This repo now includes an MVP BN254 Groth16 pipeline under `crates/`:
 - `setup` generates local Arkworks proving/verifying keys or imports ceremony artifacts.
 - `prover` creates a Groth16 proof and fixed-order public inputs.
 - `verifier-client` verifies proofs locally with Arkworks.
-- `ecvrf-solana-program` wires an Anchor instruction to `groth16-solana`.
+- `ecvrf-solana-program` wires a standalone Anchor instruction to `groth16-solana`.
+- `randomness-beacon` now also verifies the same Groth16 proof inside `finalize_epoch`.
 
 The MVP intentionally does not implement full RFC 9381 ECVRF inside the circuit. It proves:
 
@@ -92,6 +93,25 @@ Public input order is fixed as:
 The current circuit is still scalar-field-only. A later ECVRF upgrade should replace `h = Poseidon(alpha_hash)` with hash-to-curve and prove `Gamma = sk * H`.
 
 For handoff/testing/integration details, see [docs/snark-vrf-integration.md](docs/snark-vrf-integration.md).
+
+### On-Chain Verifier Status
+
+The repo now has a working on-chain Groth16 verifier path.
+
+There are two verifier entry points:
+
+- `crates/solana-program`: a standalone Anchor verifier used by the local-validator test harness.
+- `programs/randomness-beacon`: the beacon program's `finalize_epoch` instruction now verifies a Groth16 proof before it stores the final VRF output.
+
+The verifier expects:
+
+```text
+proof = 256 bytes: -A || B || C
+public_inputs = [alpha_hash, beta]
+vrf_output = beta
+```
+
+`finalize_epoch` rejects invalid proofs, rejects malformed public input lists, and rejects a submitted `vrf_output` that does not match the verified `beta`.
 
 ### Contribution Protocol
 
@@ -201,6 +221,19 @@ cargo test -p vrf-circuit
 cargo test -p setup
 cargo test -p prover
 cargo test -p verifier-client
+```
+
+Run the on-chain verifier local-validator test:
+
+```bash
+cargo run -p prover -- --sk 12345 --alpha "test randomness"
+cargo test --manifest-path crates/solana-local-validator-test/Cargo.toml
+```
+
+The first command refreshes `artifacts/proof_solana.bin` and `artifacts/public_inputs_solana.bin`; the local-validator test includes those files and submits them to the on-chain verifier. Expected result:
+
+```text
+test local_validator_accepts_real_vrf_proof ... ok
 ```
 
 ## License

@@ -49,9 +49,17 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
         todo!()
     }
 
-    pub async fn send_finalize(&self, _vrf_output: &VrfOutput) -> Result<Signature> {
-        // TODO: build and send finalize_epoch instruction
-        todo!()
+    pub async fn send_finalize(&self, vrf_output: &VrfOutput) -> Result<Signature> {
+        let ix = self.build_finalize_instruction(vrf_output);
+        let blockhash = self.rpc.get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&self.payer.pubkey()),
+            &[self.payer],
+            blockhash,
+        );
+        let sig = self.rpc.send_and_confirm_transaction(&tx).await?;
+        Ok(sig)
     }
 
     pub fn build_commit_instruction(&self, commitment: [u8; 32]) -> Instruction {
@@ -60,6 +68,23 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
             epoch_state: self.epoch_state_address,
         };
         let ix_data = randomness_beacon::instruction::OracleCommit { commitment };
+        Instruction {
+            program_id: self.program_id,
+            accounts: accounts.to_account_metas(None),
+            data: ix_data.data(),
+        }
+    }
+
+    pub fn build_finalize_instruction(&self, vrf_output: &VrfOutput) -> Instruction {
+        let accounts = randomness_beacon::accounts::FinalizeEpoch {
+            oracle: self.payer.pubkey(),
+            epoch_state: self.epoch_state_address,
+        };
+        let ix_data = randomness_beacon::instruction::FinalizeEpoch {
+            vrf_output: vrf_output.output,
+            proof: vrf_output.proof.clone(),
+            public_inputs: vrf_output.public_inputs.clone(),
+        };
         Instruction {
             program_id: self.program_id,
             accounts: accounts.to_account_metas(None),
@@ -139,5 +164,34 @@ mod tests {
         let commitment = [0xDD; 32];
         let sig = builder.send_commit(commitment).await.unwrap();
         assert_eq!(sig, Signature::default());
+    }
+
+    #[test]
+    fn build_finalize_instruction_encodes_output_proof_and_public_inputs() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let vrf_output = VrfOutput {
+            output: [0x11; 32],
+            proof: vec![0x22; 256],
+            public_inputs: vec![[0x33; 32], [0x11; 32]],
+        };
+        let ix = builder.build_finalize_instruction(&vrf_output);
+
+        assert_eq!(ix.program_id, program_id);
+        assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
+        assert!(ix.accounts[0].is_signer);
+        assert_eq!(ix.accounts[1].pubkey, epoch_state);
+
+        let expected = randomness_beacon::instruction::FinalizeEpoch {
+            vrf_output: vrf_output.output,
+            proof: vrf_output.proof,
+            public_inputs: vrf_output.public_inputs,
+        }
+        .data();
+        assert_eq!(ix.data, expected);
     }
 }

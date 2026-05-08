@@ -10,11 +10,12 @@ members = [
     "crates/verifier-client",
     "crates/solana-program",
 ]
-[profile.release]
-overflow-checks = true
 exclude = [
     "crates/solana-local-validator-test",
 ]
+
+[profile.release]
+overflow-checks = true
 
 [workspace.dependencies]
 anyhow = "1"

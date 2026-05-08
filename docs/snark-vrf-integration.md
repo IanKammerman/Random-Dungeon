@@ -28,7 +28,8 @@ This is not full RFC 9381 ECVRF yet. It is the working MVP path for proving a pr
 - `crates/setup`: local random trusted setup and verifying-key export.
 - `crates/prover`: proof generation and Solana byte export.
 - `crates/verifier-client`: local Arkworks proof verification.
-- `crates/solana-program`: Anchor program that verifies `groth16-solana` proof bytes.
+- `crates/solana-program`: standalone Anchor program that verifies `groth16-solana` proof bytes.
+- `programs/randomness-beacon`: beacon Anchor program; `finalize_epoch` verifies the same proof format before accepting `beta` as the epoch VRF output.
 - `crates/solana-local-validator-test`: standalone local-validator test harness.
 
 The local-validator test harness is intentionally excluded from the root workspace because `solana-program-test` has a large Solana 2.2 dependency graph that conflicts with the existing oracle Solana 1.18 stack.
@@ -111,6 +112,7 @@ cargo test -p ecvrf-solana-program
 Run the local-validator test:
 
 ```bash
+cargo run -p prover -- --sk 12345 --alpha "test randomness"
 cargo test --manifest-path crates/solana-local-validator-test/Cargo.toml --test local_validator
 ```
 
@@ -121,6 +123,8 @@ test local_validator_accepts_real_vrf_proof ... ok
 ```
 
 Do not paste that output line into bash. `test` is a shell builtin, so bash will try to run it as a command.
+
+The prover command refreshes `artifacts/proof_solana.bin` and `artifacts/public_inputs_solana.bin`. The local-validator test includes those files directly, so rerun the prover whenever `artifacts/verifying_key_solana.rs`, `artifacts/proving_key.bin`, or the circuit changes.
 
 ## What The Local-Validator Test Proves
 
@@ -137,15 +141,30 @@ The local-validator test:
    - the accepted `beta`
    - the public inputs
 
-The test fixture is tied to the currently tracked `artifacts/verifying_key_solana.rs`. If the circuit or verifying key changes, regenerate the proof fixture and update the test constants.
+The test fixture is tied to the currently tracked `artifacts/verifying_key_solana.rs`. If the circuit or verifying key changes, regenerate the proof artifacts before running the test:
+
+```bash
+cargo run -p prover -- --sk 12345 --alpha "test randomness"
+```
 
 ## On-Chain Instruction Interface
 
-The verifier program exposes:
+The standalone verifier program exposes:
 
 ```rust
 pub fn verify_vrf_proof(
     ctx: Context<VerifyVrfProof>,
+    proof: Vec<u8>,
+    public_inputs: Vec<[u8; 32]>,
+) -> Result<()>
+```
+
+The beacon program exposes:
+
+```rust
+pub fn finalize_epoch(
+    ctx: Context<FinalizeEpoch>,
+    vrf_output: [u8; 32],
     proof: Vec<u8>,
     public_inputs: Vec<[u8; 32]>,
 ) -> Result<()>
@@ -166,6 +185,8 @@ public_inputs[0] = alpha_hash
 public_inputs[1] = beta
 ```
 
+For `randomness-beacon::finalize_epoch`, `vrf_output` must equal `public_inputs[1]`. The program verifies the Groth16 proof first, then stores `vrf_output`, sets `is_finalized = true`, and moves the epoch phase to `Closed`.
+
 The program uses hardcoded constants from:
 
 ```text
@@ -178,7 +199,7 @@ Regenerate that file after any circuit change:
 cargo run -p setup -- local-random
 ```
 
-Then regenerate proof fixtures:
+Then regenerate proof artifacts:
 
 ```bash
 cargo run -p prover -- --sk 12345 --alpha "test randomness"
@@ -200,7 +221,7 @@ Recommended integration shape:
 4. Use the prover path to generate:
    - `proof_solana.bin` bytes
    - `public_inputs_solana` as `Vec<[u8; 32]>`
-5. Submit those to the Solana verifier instruction.
+5. Submit those to `randomness-beacon::finalize_epoch`.
 
 For production code, do not shell out to `cargo run -p prover`. Move the prover logic into a library crate or shared function so the oracle can call it directly.
 
@@ -243,4 +264,3 @@ The high-level production path is:
 3. Run circuit-specific Groth16 phase 2.
 4. Export `verification_key.json`.
 5. Import/generate Solana verifying-key constants.
-
