@@ -7,6 +7,12 @@ pub struct UsgsSource {
     pub client: Client,
 }
 
+impl Default for UsgsSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UsgsSource {
     pub fn new() -> Self {
         Self {

@@ -7,6 +7,12 @@ pub struct NoaaSource {
     pub client: Client,
 }
 
+impl Default for NoaaSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoaaSource {
     pub fn new() -> Self {
         Self {
