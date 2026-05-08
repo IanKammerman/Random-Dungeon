@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
 
+pub mod verifier;
+
 declare_id!("9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9");
 
 #[program]
@@ -42,10 +44,21 @@ pub mod randomness_beacon {
     }
 
     pub fn finalize_epoch(
-        _ctx: Context<FinalizeEpoch>,
-        _vrf_output: [u8; 32],
-        _proof: Vec<u8>,
+        ctx: Context<FinalizeEpoch>,
+        vrf_output: [u8; 32],
+        proof: Vec<u8>,
+        public_inputs: Vec<[u8; 32]>,
     ) -> Result<()> {
+        let state = &mut ctx.accounts.epoch_state;
+        let verified_output = verifier::verify_vrf_proof(&proof, &public_inputs)?;
+        require!(
+            verified_output == vrf_output,
+            BeaconError::VrfOutputMismatch
+        );
+
+        state.vrf_output = vrf_output;
+        state.is_finalized = true;
+        state.phase = EpochPhase::Closed;
         Ok(())
     }
 }
@@ -98,6 +111,14 @@ pub struct FinalizeEpoch<'info> {
 pub enum BeaconError {
     #[msg("Commit deadline has passed")]
     CommitDeadlinePassed,
+    #[msg("expected a 256 byte Groth16 proof encoded as A || B || C")]
+    InvalidProofLength,
+    #[msg("expected exactly two public inputs: [alpha_hash, beta]")]
+    InvalidPublicInputCount,
+    #[msg("Groth16 proof verification failed")]
+    Groth16VerificationFailed,
+    #[msg("verified VRF output does not match the submitted output")]
+    VrfOutputMismatch,
 }
 
 // --- On-chain state ---
