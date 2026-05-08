@@ -231,6 +231,16 @@ mod tests {
     }
 
     #[test]
+    fn commit_at_exact_deadline_slot_is_still_commit_phase() {
+        // Matches the on-chain check: require!(clock.slot <= commit_deadline_slot)
+        // The oracle must consider the deadline slot itself as still in Commit phase,
+        // otherwise it would skip a slot where the program would still accept a commit.
+        let state = sample_epoch_state(); // commit_deadline_slot = 100
+        assert_eq!(derive_phase(&state, 100), EpochPhase::Commit);
+        assert_eq!(derive_phase(&state, 101), EpochPhase::Reveal);
+    }
+
+    #[test]
     fn commitment_hash_is_sha256_of_salt() {
         use sha2::{Sha256, Digest};
         let salt = [7u8; 32];

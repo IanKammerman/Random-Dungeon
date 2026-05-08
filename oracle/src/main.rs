@@ -1,5 +1,3 @@
-use anyhow::Result;
-use std::path::Path;
 use anyhow::{Context, Result};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;

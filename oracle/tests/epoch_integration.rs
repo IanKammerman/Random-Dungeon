@@ -1,7 +1,7 @@
 use anchor_lang::{AnchorSerialize, Discriminator};
 use anyhow::Result;
 use async_trait::async_trait;
-use solana_program_test::{processor, ProgramTest};
+use solana_program_test::ProgramTest;
 use solana_sdk::{
     account::Account,
     hash::Hash,
@@ -143,44 +143,18 @@ async fn oracle_reads_none_for_missing_epoch() {
     assert!(phase.is_none());
 }
 
-/// Minimal processor that mimics the on-chain oracle_commit logic.
-/// Accepts instruction data: 8-byte discriminator + 32-byte commitment.
-/// Writes the commitment into the epoch_state account at the correct offset.
-fn stub_commit_processor(
-    _program_id: &Pubkey,
-    accounts: &[solana_sdk::account_info::AccountInfo],
-    instruction_data: &[u8],
-) -> solana_sdk::entrypoint::ProgramResult {
-    if instruction_data.len() < 40 {
-        return Err(solana_sdk::program_error::ProgramError::InvalidInstructionData);
-    }
-    let commitment: [u8; 32] = instruction_data[8..40].try_into().unwrap();
-    // In the serialized EpochState (after the 8-byte account discriminator):
-    //   epoch_id: 8 bytes (offset 0)
-    //   phase: 1 byte (offset 8)
-    //   commit_deadline_slot: 8 bytes (offset 9)
-    //   reveal_deadline_slot: 8 bytes (offset 17)
-    //   finalize_deadline_slot: 8 bytes (offset 25)
-    //   commitment: 32 bytes (offset 33)
-    let epoch_state_account = &accounts[1];
-    let mut data = epoch_state_account.try_borrow_mut_data()?;
-    // account discriminator (8) + field offset (33) = byte 41
-    data[41..73].copy_from_slice(&commitment);
-    Ok(())
-}
-
 #[tokio::test]
 async fn send_commit_stores_commitment_on_chain() {
-    // randomness_beacon::ID is currently a placeholder (system program); use a unique ID for test
-    let program_id = Pubkey::new_unique();
+    let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 1;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
 
-    let mut pt = ProgramTest::new(
-        "randomness_beacon",
-        program_id,
-        processor!(stub_commit_processor),
-    );
+    // Load the real BPF program from target/deploy/
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+
+    // Pre-populate the epoch PDA with correctly-sized data (matching the current
+    // EpochState layout) so the on-chain oracle_commit can read commit_deadline_slot
+    // and enforce the deadline check end-to-end.
     let initial_state = EpochState {
         epoch_id,
         phase: EpochPhase::Commit,
@@ -191,6 +165,8 @@ async fn send_commit_stores_commitment_on_chain() {
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
         is_finalized: false,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed: [0u8; 32],
     };
     pt.add_account(
         epoch_state_pda,
@@ -204,13 +180,14 @@ async fn send_commit_stores_commitment_on_chain() {
     );
 
     let (banks_client, payer, _blockhash) = pt.start().await;
-
     let payer_copy = Keypair::from_bytes(&payer.to_bytes()).unwrap();
 
     let adapter = BanksRpcAdapter {
         banks: tokio::sync::Mutex::new(banks_client),
     };
 
+    // Submit a commit via the oracle's TxBuilder — exercises the real program's
+    // commit_deadline_slot check.
     let salt = [42u8; 32];
     let commitment = oracle::epoch::commitment_hash(&salt);
 
