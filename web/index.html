@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Random Dungeon — A verifiable randomness beacon on Solana</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Random Dungeon</h1>
+      <p class="tagline">A verifiable randomness beacon on Solana.</p>
+
+      <div class="hero-prose">
+        <p>
+          A randomness beacon publishes a fresh random output every epoch and
+          asks the world to trust it. The hard part is not generating random
+          bytes — every operating system can do that. The hard part is
+          convincing a stranger that the bytes were not chosen, and could not
+          have been chosen, by anyone in particular. Manipulability of the
+          last digit is enough to break a fair lottery.
+        </p>
+        <p>
+          Random Dungeon commits four independent real-world entropy sources
+          (USGS earthquakes, NOAA weather, Bitcoin block hashes, drand) into
+          a canonical manifest, hashes that manifest into a 32-byte seed,
+          feeds the seed through a verifiable random function, and proves
+          the VRF was computed correctly with a Groth16 SNARK. The proof is
+          256 bytes and verifies on Solana in milliseconds. The byte-for-byte
+          inputs that produced today's output are below.
+        </p>
+      </div>
+
+      <div class="badges">
+        <span class="badge">COMS 4995</span>
+        <span class="badge">Solana</span>
+        <span class="badge">Open Source</span>
+      </div>
+    </section>
+
+    <section class="epoch-selector-bar" aria-label="Epoch selector">
+      <label for="epoch-select">Epoch</label>
+      <select id="epoch-select"></select>
+      <span class="epoch-meta" id="epoch-meta"></span>
+    </section>
+
+    <section id="sources" aria-label="Entropy sources">
+      <h2>Four sources of entropy</h2>
+      <p class="section-lead">
+        Each epoch fetches four independent feeds. Each feed is canonicalized
+        to a fixed-layout byte string, hashed with SHA-256, and bound into the
+        manifest. No source's contribution can be silently re-rolled.
+      </p>
+      <div class="source-grid" id="source-grid"></div>
+    </section>
+
+    <section id="pipeline" aria-label="Pipeline">
+      <h2>The pipeline</h2>
+      <p class="section-lead">
+        Click any stage to see the bytes for the selected epoch.
+      </p>
+      <div class="pipeline-svg-wrap">
+        <svg id="pipeline-svg" viewBox="0 0 1200 400" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Five-stage pipeline diagram"></svg>
+      </div>
+      <div id="pipeline-panel" class="pipeline-panel"></div>
+    </section>
+
+    <section id="verify" aria-label="Verify the seed yourself">
+      <h2>Verify the seed yourself</h2>
+      <p class="section-lead">
+        Both checks below run in your browser using <code>crypto.subtle</code>.
+        Nothing is sent to a server.
+      </p>
+
+      <div class="verify-card">
+        <div class="verify-row">
+          <span class="verify-label">manifest_hash</span>
+          <span class="hash" id="verify-manifest-hash"></span>
+        </div>
+        <div class="verify-row">
+          <span class="verify-label">archived seed</span>
+          <span class="hash" id="verify-archived-seed"></span>
+        </div>
+
+        <div class="verify-action">
+          <button id="verify-seed-btn">Recompute SHA256(domain || "seed" || manifest_hash)</button>
+          <div class="verify-result" id="verify-seed-result"></div>
+        </div>
+
+        <hr class="verify-sep" />
+
+        <div class="verify-action">
+          <p class="verify-note">
+            The check above trusts the archived <code>manifest_hash</code>.
+            The check below re-derives the manifest hash from per-source
+            canonical hashes — covering the full reproducibility chain
+            specified in <code>docs/entropy.md</code>.
+          </p>
+          <button id="verify-manifest-btn">Recompute manifest_hash from canonical hashes</button>
+          <div class="verify-result" id="verify-manifest-result"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="snark" aria-label="SNARK">
+      <h2>And then a zero-knowledge proof</h2>
+      <p class="section-lead">
+        The seed feeds a Verifiable Random Function. We prove the VRF was
+        computed correctly with a Groth16 SNARK. Anyone can verify the proof
+        on-chain in milliseconds without re-running the computation or
+        knowing the secret key.
+      </p>
+      <div class="snark-card" id="snark-card"></div>
+    </section>
+
+    <footer>
+      <div class="footer-row">
+        <span>Tony Fields · Ian Kammerman · Cathy Zhang</span>
+      </div>
+      <div class="footer-row footer-meta">
+        <span>COMS 4995 — Sciences of Blockchain · Spring 2026</span>
+      </div>
+      <div class="footer-row">
+        <a href="https://github.com/IanKammerman/Random-Dungeon" target="_blank" rel="noopener">GitHub</a>
+        <span class="dot">·</span>
+        <span>Apache 2.0</span>
+      </div>
+    </footer>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "domain_tag": "random-dungeon/entropy/v1",
+  "epoch": 1,
+  "manifest_fetched_at_ms": 1778273033351,
+  "manifest_hash": "e0b7914555cf0a4b8076509eba644d42ee3ebe61c6e47cb8a915b79a7560a868",
+  "seed": "ffc530e6d41d7e66553789c6092f9fd1c7c9c14dbe66e5795e5e6e405f11529e",
+  "sources": [
+    {
+      "canonical_hash": "f3da14540e1904ed1a941e839e4df863d6509e46f7efa02e07339a6dc93e5960",
+      "canonical_len": 72,
+      "endpoint": "https://blockchain.info/latestblock",
+      "fetched_at_ms": 1778273033185,
+      "name": "btc"
+    },
+    {
+      "canonical_hash": "c5a48873c39909475d020c273bd5f7ad6431a9e9e831542aefe578e1c41fe0b6",
+      "canonical_len": 168,
+      "endpoint": "https://api.drand.sh/public/latest",
+      "fetched_at_ms": 1778273033346,
+      "name": "drand"
+    },
+    {
+      "canonical_hash": "3771c64409920dd6059f05b0a8c60f2cf0881cc0d135c71cfbde52186f35a288",
+      "canonical_len": 192,
+      "endpoint": "https://api.weather.gov/stations/{station}/observations/latest",
+      "fetched_at_ms": 1778273033050,
+      "name": "nws"
+    },
+    {
+      "canonical_hash": "92023c2025ce968fb5c128c7554c84d105cf620820c03b91b2f730691809c5e1",
+      "canonical_len": 344,
+      "endpoint": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+      "fetched_at_ms": 1778273033031,
+      "name": "usgs"
+    }
+  ]
+}
