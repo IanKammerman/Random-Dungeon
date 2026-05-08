@@ -66,3 +66,9 @@ ceremony/transcripts/*
 =======
 target/deploy/*-keypair.json
 >>>>>>> 8c2efd2 (Added a bunch to the runtime env, fixed cargo and anchor toml, updated gitignore and added test keypair)
+
+# Web visualizer — committed archive snapshots and SNARK public inputs.
+# (`*.json` is ignored globally above; whitelist these so the static site
+# has data to read.)
+!web/public/archives/**/*.json
+!web/public/snark/*.json

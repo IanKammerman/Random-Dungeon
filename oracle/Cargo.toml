@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "oracle"
 path = "src/main.rs"
 
+[[bin]]
+name = "entropy_once"
+path = "src/bin/entropy_once.rs"
+
 [dependencies]
 randomness-beacon = { path = "../programs/randomness-beacon", features = ["no-entrypoint"] }
 proc-macro2 = { workspace = true }
