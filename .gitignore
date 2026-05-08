@@ -25,3 +25,6 @@ wallets/*.json
 
 # Logs
 *.log
+
+# Oracle archive
+/oracle/archive/
