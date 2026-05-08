@@ -35,6 +35,7 @@ wallets/*.json
 # Generated SNARK artifacts
 artifacts/*
 !artifacts/.gitkeep
+!artifacts/verifying_key_solana.rs
 ceremony/ptau/*
 ceremony/zkey/*
 ceremony/transcripts/*
