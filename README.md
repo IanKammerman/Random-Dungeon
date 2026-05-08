@@ -78,9 +78,9 @@ This repo now includes an MVP BN254 Groth16 pipeline under `crates/`:
 The MVP intentionally does not implement full RFC 9381 ECVRF inside the circuit. It proves:
 
 ```text
-h = field_hash(alpha_hash)
+h = Poseidon(alpha_hash)
 gamma = sk * h
-beta = field_hash(gamma)
+beta = Poseidon(gamma)
 ```
 
 Public input order is fixed as:
@@ -89,7 +89,7 @@ Public input order is fixed as:
 [alpha_hash, beta]
 ```
 
-The current field hash is a compact algebraic placeholder used to keep the Rust and R1CS implementations aligned while the project pipeline is brought up. Replace it with a production Poseidon/hash-to-curve design before relying on the primitive for real randomness.
+The current circuit is still scalar-field-only. A later ECVRF upgrade should replace `h = Poseidon(alpha_hash)` with hash-to-curve and prove `Gamma = sk * H`.
 
 ### Contribution Protocol
 

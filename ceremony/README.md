@@ -5,8 +5,9 @@ The Rust `local-random` setup is for development only. Production Groth16 deploy
 ## Commands
 
 ```bash
-# Install snarkjs
+# Install snarkjs and circomlib
 npm install -g snarkjs
+npm install circomlib
 
 # Compile circuit
 circom ceremony/vrf.circom --r1cs --wasm --sym -o build/

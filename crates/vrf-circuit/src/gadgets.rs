@@ -1,12 +1,14 @@
+use ark_crypto_primitives::sponge::{
+    constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
+};
 use ark_ff::PrimeField;
-use ark_r1cs_std::{fields::fp::FpVar, prelude::*};
+use ark_r1cs_std::{fields::fp::FpVar, R1CSVar};
 use ark_relations::r1cs::SynthesisError;
+use vrf_core::poseidon_config;
 
 pub fn field_hash_var<F: PrimeField>(x: &FpVar<F>) -> Result<FpVar<F>, SynthesisError> {
-    let y = x + FpVar::constant(F::from(5u64));
-    let y2 = y.square()?;
-    let y4 = y2.square()?;
-    let y5 = y4 * y;
-    let linear = x.clone() * FpVar::constant(F::from(7u64));
-    Ok(y5 + linear + FpVar::constant(F::from(42u64)))
+    let params = poseidon_config::<F>();
+    let mut sponge = PoseidonSpongeVar::<F>::new(x.cs(), &params);
+    sponge.absorb(&vec![x.clone()])?;
+    Ok(sponge.squeeze_field_elements(1)?[0].clone())
 }
