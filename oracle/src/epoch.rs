@@ -6,13 +6,42 @@ use randomness_beacon::EpochState;
 
 use crate::rpc::RpcProvider;
 
-pub struct EpochMonitor<R: RpcProvider> {
-    pub rpc: R,
+/// Held in memory across the commit→reveal transition for a single epoch.
+/// If the oracle process restarts, this is lost and the epoch's reveal cannot
+/// be submitted — the beacon either finalizes without this oracle or the epoch
+/// is skipped.
+pub struct CommitState {
+    pub epoch_id: u64,
+    pub salt: [u8; 32],
+}
+
+impl CommitState {
+    pub fn new(epoch_id: u64) -> Self {
+        use rand::RngCore;
+        let mut salt = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut salt);
+        Self { epoch_id, salt }
+    }
+
+    pub fn commitment(&self) -> [u8; 32] {
+        commitment_hash(&self.salt)
+    }
+}
+
+pub fn commitment_hash(salt: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(salt);
+    hasher.finalize().into()
+}
+
+pub struct EpochMonitor<'a, R: RpcProvider + ?Sized> {
+    pub rpc: &'a R,
     pub epoch_state_address: Pubkey,
 }
 
-impl<R: RpcProvider> EpochMonitor<R> {
-    pub fn new(rpc: R, epoch_state_address: Pubkey) -> Self {
+impl<'a, R: RpcProvider + ?Sized> EpochMonitor<'a, R> {
+    pub fn new(rpc: &'a R, epoch_state_address: Pubkey) -> Self {
         Self {
             rpc,
             epoch_state_address,
@@ -25,7 +54,6 @@ impl<R: RpcProvider> EpochMonitor<R> {
             None => Ok(None),
             Some(raw) => {
                 use anchor_lang::AnchorDeserialize;
-                // Skip the 8-byte Anchor discriminator
                 let state = EpochState::deserialize(&mut &raw[8..])?;
                 Ok(Some(state))
             }
@@ -100,6 +128,17 @@ mod tests {
         async fn get_account_data(&self, _pubkey: &Pubkey) -> Result<Option<Vec<u8>>> {
             Ok(self.account_data.lock().unwrap().clone())
         }
+
+        async fn get_latest_blockhash(&self) -> Result<solana_sdk::hash::Hash> {
+            Ok(solana_sdk::hash::Hash::default())
+        }
+
+        async fn send_and_confirm_transaction(
+            &self,
+            _tx: &solana_sdk::transaction::Transaction,
+        ) -> Result<solana_sdk::signature::Signature> {
+            Ok(solana_sdk::signature::Signature::default())
+        }
     }
 
     fn sample_epoch_state() -> EpochState {
@@ -121,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn read_epoch_state_returns_none_when_account_missing() {
         let rpc = MockRpc::with_state(50, None);
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let result = monitor.read_epoch_state().await.unwrap();
         assert!(result.is_none());
     }
@@ -129,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn current_phase_returns_none_when_account_missing() {
         let rpc = MockRpc::with_state(50, None);
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert!(phase.is_none());
     }
@@ -138,7 +177,7 @@ mod tests {
     async fn current_phase_commit_when_slot_before_commit_deadline() {
         let state = sample_epoch_state();
         let rpc = MockRpc::with_state(50, Some(&state));
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert_eq!(phase, Some(EpochPhase::Commit));
     }
@@ -147,7 +186,7 @@ mod tests {
     async fn current_phase_reveal_when_slot_past_commit_deadline() {
         let state = sample_epoch_state();
         let rpc = MockRpc::with_state(150, Some(&state));
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert_eq!(phase, Some(EpochPhase::Reveal));
     }
@@ -156,7 +195,7 @@ mod tests {
     async fn current_phase_finalize_when_slot_past_reveal_deadline() {
         let state = sample_epoch_state();
         let rpc = MockRpc::with_state(250, Some(&state));
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert_eq!(phase, Some(EpochPhase::Finalize));
     }
@@ -165,7 +204,7 @@ mod tests {
     async fn current_phase_closed_when_slot_past_finalize_deadline() {
         let state = sample_epoch_state();
         let rpc = MockRpc::with_state(350, Some(&state));
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert_eq!(phase, Some(EpochPhase::Closed));
     }
@@ -174,9 +213,8 @@ mod tests {
     async fn current_phase_closed_when_finalized() {
         let mut state = sample_epoch_state();
         state.is_finalized = true;
-        // Even though slot is in "commit" range, finalized flag wins
         let rpc = MockRpc::with_state(50, Some(&state));
-        let monitor = EpochMonitor::new(rpc, Pubkey::new_unique());
+        let monitor = EpochMonitor::new(&rpc, Pubkey::new_unique());
         let phase = monitor.current_phase().await.unwrap();
         assert_eq!(phase, Some(EpochPhase::Closed));
     }
@@ -184,17 +222,25 @@ mod tests {
     #[test]
     fn derive_phase_boundary_conditions() {
         let state = sample_epoch_state();
-        // Exactly at commit deadline → still Commit
         assert_eq!(derive_phase(&state, 100), EpochPhase::Commit);
-        // One past commit deadline → Reveal
         assert_eq!(derive_phase(&state, 101), EpochPhase::Reveal);
-        // Exactly at reveal deadline → still Reveal
         assert_eq!(derive_phase(&state, 200), EpochPhase::Reveal);
-        // One past → Finalize
         assert_eq!(derive_phase(&state, 201), EpochPhase::Finalize);
-        // Exactly at finalize deadline → still Finalize
         assert_eq!(derive_phase(&state, 300), EpochPhase::Finalize);
-        // One past → Closed
         assert_eq!(derive_phase(&state, 301), EpochPhase::Closed);
+    }
+
+    #[test]
+    fn commitment_hash_is_sha256_of_salt() {
+        use sha2::{Sha256, Digest};
+        let salt = [7u8; 32];
+        let expected: [u8; 32] = Sha256::new().chain_update(salt).finalize().into();
+        assert_eq!(commitment_hash(&salt), expected);
+    }
+
+    #[test]
+    fn commit_state_produces_correct_commitment() {
+        let cs = CommitState { epoch_id: 5, salt: [0xAB; 32] };
+        assert_eq!(cs.commitment(), commitment_hash(&[0xAB; 32]));
     }
 }

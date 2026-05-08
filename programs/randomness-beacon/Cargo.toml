@@ -8,10 +8,12 @@ crate-type = ["cdylib", "lib"]
 name = "randomness_beacon"
 
 [features]
-default = []
 no-entrypoint = []
 no-idl = []
+no-log-ix-name = []
 cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
 anchor-lang = "0.30.1"

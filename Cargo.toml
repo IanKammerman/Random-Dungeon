@@ -4,3 +4,5 @@ members = [
     "programs/*",
     "oracle",
 ]
+[profile.release]
+overflow-checks = true

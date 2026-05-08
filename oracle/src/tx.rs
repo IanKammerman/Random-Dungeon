@@ -1,26 +1,47 @@
+use anchor_lang::{InstructionData, ToAccountMetas};
 use anyhow::Result;
+use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Signature;
+use solana_sdk::signature::{Keypair, Signature};
+use solana_sdk::signer::Signer;
+use solana_sdk::transaction::Transaction;
 
-use crate::rpc::SolanaRpc;
+use crate::rpc::RpcProvider;
 use crate::vrf::VrfOutput;
 
-pub struct TxBuilder<'a> {
-    pub rpc: &'a SolanaRpc,
+pub struct TxBuilder<'a, R: RpcProvider> {
+    pub rpc: &'a R,
+    pub payer: &'a Keypair,
+    pub program_id: Pubkey,
     pub epoch_state_address: Pubkey,
 }
 
-impl<'a> TxBuilder<'a> {
-    pub fn new(rpc: &'a SolanaRpc, epoch_state_address: Pubkey) -> Self {
+impl<'a, R: RpcProvider> TxBuilder<'a, R> {
+    pub fn new(
+        rpc: &'a R,
+        payer: &'a Keypair,
+        program_id: Pubkey,
+        epoch_state_address: Pubkey,
+    ) -> Self {
         Self {
             rpc,
+            payer,
+            program_id,
             epoch_state_address,
         }
     }
 
-    pub async fn send_commit(&self, _commitment: [u8; 32]) -> Result<Signature> {
-        // TODO: build and send oracle_commit instruction
-        todo!()
+    pub async fn send_commit(&self, commitment: [u8; 32]) -> Result<Signature> {
+        let ix = self.build_commit_instruction(commitment);
+        let blockhash = self.rpc.get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&self.payer.pubkey()),
+            &[self.payer],
+            blockhash,
+        );
+        let sig = self.rpc.send_and_confirm_transaction(&tx).await?;
+        Ok(sig)
     }
 
     pub async fn send_reveal(&self, _seed: [u8; 32]) -> Result<Signature> {
@@ -33,12 +54,90 @@ impl<'a> TxBuilder<'a> {
         todo!()
     }
 
-    pub async fn read_epoch_state(&self) -> Result<randomness_beacon::EpochState> {
-        use crate::rpc::RpcProvider;
-        use anchor_lang::AnchorDeserialize;
-        let data = self.rpc.get_account_data(&self.epoch_state_address).await?
-            .ok_or_else(|| anyhow::anyhow!("epoch state account not found"))?;
-        let state = randomness_beacon::EpochState::deserialize(&mut &data[8..])?;
-        Ok(state)
+    pub fn build_commit_instruction(&self, commitment: [u8; 32]) -> Instruction {
+        let accounts = randomness_beacon::accounts::OracleCommit {
+            oracle: self.payer.pubkey(),
+            epoch_state: self.epoch_state_address,
+        };
+        let ix_data = randomness_beacon::instruction::OracleCommit { commitment };
+        Instruction {
+            program_id: self.program_id,
+            accounts: accounts.to_account_metas(None),
+            data: ix_data.data(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use solana_sdk::hash::Hash;
+
+    struct MockRpc;
+
+    #[async_trait]
+    impl RpcProvider for MockRpc {
+        async fn get_slot(&self) -> Result<u64> {
+            Ok(0)
+        }
+        async fn get_account_data(&self, _pubkey: &Pubkey) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+        async fn get_latest_blockhash(&self) -> Result<Hash> {
+            Ok(Hash::default())
+        }
+        async fn send_and_confirm_transaction(&self, _tx: &Transaction) -> Result<Signature> {
+            Ok(Signature::default())
+        }
+    }
+
+    #[test]
+    fn build_commit_instruction_has_correct_accounts() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let commitment = [0xBB; 32];
+        let ix = builder.build_commit_instruction(commitment);
+
+        assert_eq!(ix.program_id, program_id);
+        // First account is oracle (signer+writable), second is epoch_state (writable)
+        assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
+        assert!(ix.accounts[0].is_signer);
+        assert!(ix.accounts[0].is_writable);
+        assert_eq!(ix.accounts[1].pubkey, epoch_state);
+        assert!(ix.accounts[1].is_writable);
+    }
+
+    #[test]
+    fn build_commit_instruction_encodes_commitment_in_data() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let commitment = [0xCC; 32];
+        let ix = builder.build_commit_instruction(commitment);
+
+        // Anchor ix data: 8-byte discriminator + 32-byte commitment
+        assert_eq!(ix.data.len(), 8 + 32);
+        assert_eq!(&ix.data[8..], &commitment);
+    }
+
+    #[tokio::test]
+    async fn send_commit_calls_rpc() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let commitment = [0xDD; 32];
+        let sig = builder.send_commit(commitment).await.unwrap();
+        assert_eq!(sig, Signature::default());
     }
 }

@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("11111111111111111111111111111111");
+declare_id!("9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9");
 
 #[program]
 pub mod randomness_beacon {
@@ -26,7 +26,14 @@ pub mod randomness_beacon {
         Ok(())
     }
 
-    pub fn oracle_commit(_ctx: Context<OracleCommit>, _commitment: [u8; 32]) -> Result<()> {
+    pub fn oracle_commit(ctx: Context<OracleCommit>, commitment: [u8; 32]) -> Result<()> {
+        let clock = Clock::get()?;
+        let state = &mut ctx.accounts.epoch_state;
+        require!(
+            clock.slot <= state.commit_deadline_slot,
+            BeaconError::CommitDeadlinePassed
+        );
+        state.commitment = commitment;
         Ok(())
     }
 
@@ -83,6 +90,14 @@ pub struct FinalizeEpoch<'info> {
     pub oracle: Signer<'info>,
     #[account(mut)]
     pub epoch_state: Account<'info, EpochState>,
+}
+
+// --- Errors ---
+
+#[error_code]
+pub enum BeaconError {
+    #[msg("Commit deadline has passed")]
+    CommitDeadlinePassed,
 }
 
 // --- On-chain state ---

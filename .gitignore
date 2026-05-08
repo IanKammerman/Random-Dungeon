@@ -25,6 +25,10 @@ wallets/*.json
 
 # Logs
 *.log
+<<<<<<< HEAD
 
 # Oracle archive
 /oracle/archive/
+=======
+target/deploy/*-keypair.json
+>>>>>>> 8c2efd2 (Added a bunch to the runtime env, fixed cargo and anchor toml, updated gitignore and added test keypair)

@@ -2,8 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::hash::Hash;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
+use solana_sdk::signature::{Keypair, Signature};
+use solana_sdk::transaction::Transaction;
 
 use crate::config::Config;
 
@@ -11,6 +13,8 @@ use crate::config::Config;
 pub trait RpcProvider: Send + Sync {
     async fn get_slot(&self) -> Result<u64>;
     async fn get_account_data(&self, pubkey: &Pubkey) -> Result<Option<Vec<u8>>>;
+    async fn get_latest_blockhash(&self) -> Result<Hash>;
+    async fn send_and_confirm_transaction(&self, tx: &Transaction) -> Result<Signature>;
 }
 
 pub struct SolanaRpc {
@@ -55,5 +59,21 @@ impl RpcProvider for SolanaRpc {
                 Err(e.into())
             }
         }
+    }
+
+    async fn get_latest_blockhash(&self) -> Result<Hash> {
+        let hash = self.client.get_latest_blockhash().await?;
+        Ok(hash)
+    }
+
+    async fn send_and_confirm_transaction(&self, tx: &Transaction) -> Result<Signature> {
+        let sig = self
+            .client
+            .send_and_confirm_transaction_with_spinner_and_commitment(
+                tx,
+                CommitmentConfig::confirmed(),
+            )
+            .await?;
+        Ok(sig)
     }
 }
