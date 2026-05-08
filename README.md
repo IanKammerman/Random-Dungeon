@@ -91,6 +91,8 @@ Public input order is fixed as:
 
 The current circuit is still scalar-field-only. A later ECVRF upgrade should replace `h = Poseidon(alpha_hash)` with hash-to-curve and prove `Gamma = sk * H`.
 
+For handoff/testing/integration details, see [docs/snark-vrf-integration.md](docs/snark-vrf-integration.md).
+
 ### Contribution Protocol
 
 The beacon's baseline entropy comes from the oracle. Any Solana wallet may additionally contribute entropy to an epoch via a commit-reveal scheme. Contributions are optional, the beacon finalizes with or without them, but allow consumers to reduce their trust in the oracle: a contributor who keeps their `r_i` secret until reveal has cryptographic assurance that the epoch's output incorporates their own randomness, regardless of the oracle's behavior.
