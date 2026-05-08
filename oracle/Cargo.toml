@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 randomness-beacon = { path = "../programs/randomness-beacon", features = ["no-entrypoint"] }
+proc-macro2 = { workspace = true }
 
 tokio = { version = "1", features = ["full"] }
 solana-client = "=1.18.26"
