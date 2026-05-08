@@ -5,7 +5,7 @@ pub mod verifier;
 
 use state::VrfProofRecord;
 
-declare_id!("11111111111111111111111111111111");
+declare_id!("Fg6PaFpoGXkYsidMpWxTWqnbW8VY2GzZ4HLJYibweX4");
 
 #[program]
 pub mod ecvrf_solana_program {
@@ -50,4 +50,3 @@ pub enum VrfProofError {
     #[msg("Groth16 proof verification failed")]
     Groth16VerificationFailed,
 }
-

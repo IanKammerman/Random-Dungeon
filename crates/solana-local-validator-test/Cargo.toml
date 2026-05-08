@@ -1,0 +1,12 @@
+[package]
+name = "solana-local-validator-test"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+anchor-lang = { version = "0.31", features = ["init-if-needed"] }
+ecvrf-solana-program = { path = "../solana-program" }
+solana-program-test = "=2.2.1"
+solana-sdk = "=2.2.1"
+tokio = { version = "1", features = ["macros"] }
+

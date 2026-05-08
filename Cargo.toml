@@ -10,6 +10,9 @@ members = [
     "crates/verifier-client",
     "crates/solana-program",
 ]
+exclude = [
+    "crates/solana-local-validator-test",
+]
 
 [workspace.dependencies]
 anyhow = "1"
