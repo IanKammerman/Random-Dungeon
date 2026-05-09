@@ -12,6 +12,7 @@ use solana_sdk::{
     transaction::Transaction,
 };
 
+use oracle::vrf::VrfOutput;
 use randomness_beacon::{EpochPhase, EpochState};
 
 struct BanksRpcAdapter {
@@ -426,5 +427,123 @@ async fn reveal_after_deadline_rejected() {
     assert!(
         result.is_err(),
         "reveal after deadline should be rejected (RevealDeadlinePassed)"
+    );
+}
+
+#[tokio::test]
+async fn finalize_after_deadline_rejected() {
+    let program_id = randomness_beacon::ID;
+    let epoch_id: u64 = 5;
+    let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+
+    // Use a very low deadline so the validator's initial slot already exceeds it
+    let finalize_deadline_slot: u64 = 1;
+
+    let initial_state = EpochState {
+        epoch_id,
+        phase: EpochPhase::Finalize,
+        commit_deadline_slot: 0,
+        reveal_deadline_slot: 0,
+        finalize_deadline_slot,
+        commitment: [0u8; 32],
+        aggregated_seed: [0u8; 32],
+        vrf_output: [0u8; 32],
+        is_finalized: false,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed: [0u8; 32],
+    };
+
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    pt.add_account(
+        epoch_state_pda,
+        Account {
+            lamports: 10_000_000,
+            data: serialize_epoch_state(&initial_state),
+            owner: program_id,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let mut ctx = pt.start_with_context().await;
+    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
+
+    // Warp well past the deadline to be certain
+    ctx.warp_to_slot(100).unwrap();
+    let adapter = Arc::new(BanksRpcAdapter {
+        banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
+    });
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+
+    // Dummy proof — the deadline check fires before the verifier
+    let dummy_vrf = VrfOutput {
+        output: [0u8; 32],
+        proof: vec![0u8; 256],
+        public_inputs: vec![[0u8; 32], [0u8; 32]],
+    };
+
+    let result = tx_builder.send_finalize(&dummy_vrf).await;
+    assert!(
+        result.is_err(),
+        "finalize after deadline should be rejected (FinalizeDeadlinePassed)"
+    );
+}
+
+#[tokio::test]
+async fn finalize_twice_rejected() {
+    let program_id = randomness_beacon::ID;
+    let epoch_id: u64 = 6;
+    let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+
+    let finalize_deadline_slot: u64 = 10_000;
+
+    // Pre-populate epoch as already finalized
+    let initial_state = EpochState {
+        epoch_id,
+        phase: EpochPhase::Closed,
+        commit_deadline_slot: 100,
+        reveal_deadline_slot: 200,
+        finalize_deadline_slot,
+        commitment: [0u8; 32],
+        aggregated_seed: [0u8; 32],
+        vrf_output: [0x11; 32],
+        is_finalized: true,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed: [0u8; 32],
+    };
+
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    pt.add_account(
+        epoch_state_pda,
+        Account {
+            lamports: 10_000_000,
+            data: serialize_epoch_state(&initial_state),
+            owner: program_id,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let (banks_client, payer, _blockhash) = pt.start().await;
+    let payer = Keypair::from_bytes(&payer.to_bytes()).unwrap();
+
+    let adapter = Arc::new(BanksRpcAdapter {
+        banks: tokio::sync::Mutex::new(banks_client),
+    });
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+
+    // Dummy proof — the already-finalized check fires before the verifier
+    let dummy_vrf = VrfOutput {
+        output: [0u8; 32],
+        proof: vec![0u8; 256],
+        public_inputs: vec![[0u8; 32], [0u8; 32]],
+    };
+
+    let result = tx_builder.send_finalize(&dummy_vrf).await;
+    assert!(
+        result.is_err(),
+        "finalize on already-finalized epoch should be rejected (AlreadyFinalized)"
     );
 }

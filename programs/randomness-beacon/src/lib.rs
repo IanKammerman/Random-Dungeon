@@ -69,7 +69,13 @@ pub mod randomness_beacon {
         proof: Vec<u8>,
         public_inputs: Vec<[u8; 32]>,
     ) -> Result<()> {
+        let clock = Clock::get()?;
         let state = &mut ctx.accounts.epoch_state;
+        require!(
+            clock.slot <= state.finalize_deadline_slot,
+            BeaconError::FinalizeDeadlinePassed
+        );
+        require!(!state.is_finalized, BeaconError::AlreadyFinalized);
         let verified_output = verifier::verify_vrf_proof(&proof, &public_inputs)?;
         require!(
             verified_output == vrf_output,
@@ -147,6 +153,10 @@ pub enum BeaconError {
     Groth16VerificationFailed,
     #[msg("verified VRF output does not match the submitted output")]
     VrfOutputMismatch,
+    #[msg("Finalize deadline has passed")]
+    FinalizeDeadlinePassed,
+    #[msg("Epoch has already been finalized")]
+    AlreadyFinalized,
 }
 
 // --- On-chain state ---
