@@ -39,7 +39,27 @@ pub mod randomness_beacon {
         Ok(())
     }
 
-    pub fn oracle_reveal(_ctx: Context<OracleReveal>, _seed: [u8; 32]) -> Result<()> {
+    pub fn oracle_reveal(ctx: Context<OracleReveal>, seed: [u8; 32]) -> Result<()> {
+        let clock = Clock::get()?;
+        let state = &mut ctx.accounts.epoch_state;
+        require!(
+            clock.slot <= state.reveal_deadline_slot,
+            BeaconError::RevealDeadlinePassed
+        );
+        require!(
+            state.commitment != [0u8; 32],
+            BeaconError::CommitmentNotSet
+        );
+        require!(
+            state.entropy_seed == [0u8; 32],
+            BeaconError::AlreadyRevealed
+        );
+        let hash = anchor_lang::solana_program::hash::hash(&seed);
+        require!(
+            hash.to_bytes() == state.commitment,
+            BeaconError::CommitmentMismatch
+        );
+        state.entropy_seed = seed;
         Ok(())
     }
 
@@ -111,6 +131,14 @@ pub struct FinalizeEpoch<'info> {
 pub enum BeaconError {
     #[msg("Commit deadline has passed")]
     CommitDeadlinePassed,
+    #[msg("Reveal deadline has passed")]
+    RevealDeadlinePassed,
+    #[msg("No commitment has been set for this epoch")]
+    CommitmentNotSet,
+    #[msg("Oracle has already revealed for this epoch")]
+    AlreadyRevealed,
+    #[msg("SHA-256(seed) does not match stored commitment")]
+    CommitmentMismatch,
     #[msg("expected a 256 byte Groth16 proof encoded as A || B || C")]
     InvalidProofLength,
     #[msg("expected exactly two public inputs: [alpha_hash, beta]")]

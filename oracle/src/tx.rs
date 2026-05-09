@@ -63,7 +63,7 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
             oracle: self.payer.pubkey(),
             epoch_state: self.epoch_state_address,
         };
-        let ix_data = randomness_beacon::instruction::OracleReveal { _seed: seed };
+        let ix_data = randomness_beacon::instruction::OracleReveal { seed };
         Instruction {
             program_id: self.program_id,
             accounts: accounts.to_account_metas(None),

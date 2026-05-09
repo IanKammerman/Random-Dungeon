@@ -213,7 +213,7 @@ async fn send_commit_stores_commitment_on_chain() {
 }
 
 #[tokio::test]
-async fn commit_reveal_submission_succeeds() {
+async fn commit_reveal_full_cycle() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 2;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
@@ -273,8 +273,6 @@ async fn commit_reveal_submission_succeeds() {
 
     // --- Advance to reveal phase ---
     ctx.warp_to_slot(commit_deadline_slot + 1).unwrap();
-
-    // Refresh the adapter's BanksClient after warp
     *adapter.banks.lock().await = ctx.banks_client.clone();
 
     // --- Reveal phase: submit salt ---
@@ -284,10 +282,149 @@ async fn commit_reveal_submission_succeeds() {
         .expect("send_reveal should succeed in reveal phase");
     assert_ne!(reveal_sig, Signature::default());
 
-    // TODO(slice-3-followup): once programs/randomness-beacon/src/lib.rs implements
-    //   - require!(clock.slot <= reveal_deadline_slot, ...)
-    //   - require!(hash(seed) == stored_commitment, ...)
-    //   - storing seed on the account
-    // extend this test to assert: (a) wrong-salt reveal rejected,
-    // (b) past-deadline reveal rejected, (c) seed stored on-chain.
+    // --- Verify on-chain state after reveal ---
+    let monitor = oracle::epoch::EpochMonitor::new(adapter.as_ref(), epoch_state_pda);
+    let state = monitor
+        .read_epoch_state()
+        .await
+        .expect("read_epoch_state failed")
+        .expect("account should exist");
+    assert_eq!(state.entropy_seed, commit_state.salt);
+}
+
+#[tokio::test]
+async fn reveal_with_wrong_salt_rejected() {
+    let program_id = randomness_beacon::ID;
+    let epoch_id: u64 = 3;
+    let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+
+    let commit_deadline_slot: u64 = 100;
+    let reveal_deadline_slot: u64 = 200;
+    let finalize_deadline_slot: u64 = 300;
+
+    let initial_state = EpochState {
+        epoch_id,
+        phase: EpochPhase::Commit,
+        commit_deadline_slot,
+        reveal_deadline_slot,
+        finalize_deadline_slot,
+        commitment: [0u8; 32],
+        aggregated_seed: [0u8; 32],
+        vrf_output: [0u8; 32],
+        is_finalized: false,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed: [0u8; 32],
+    };
+
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    pt.add_account(
+        epoch_state_pda,
+        Account {
+            lamports: 10_000_000,
+            data: serialize_epoch_state(&initial_state),
+            owner: program_id,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let mut ctx = pt.start_with_context().await;
+    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
+
+    // Commit with salt A
+    let real_salt = [0xAA; 32];
+    let commitment = oracle::epoch::commitment_hash(&real_salt);
+
+    let adapter = Arc::new(BanksRpcAdapter {
+        banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
+    });
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+
+    tx_builder
+        .send_commit(commitment)
+        .await
+        .expect("send_commit should succeed");
+
+    // Advance to reveal phase
+    ctx.warp_to_slot(commit_deadline_slot + 1).unwrap();
+    *adapter.banks.lock().await = ctx.banks_client.clone();
+
+    // Attempt reveal with salt B (wrong salt)
+    let wrong_commit_state = oracle::epoch::CommitState {
+        epoch_id,
+        salt: [0xBB; 32],
+    };
+    let result = tx_builder.send_reveal(&wrong_commit_state).await;
+    assert!(
+        result.is_err(),
+        "reveal with wrong salt should be rejected (CommitmentMismatch)"
+    );
+}
+
+#[tokio::test]
+async fn reveal_after_deadline_rejected() {
+    let program_id = randomness_beacon::ID;
+    let epoch_id: u64 = 4;
+    let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+
+    let commit_deadline_slot: u64 = 100;
+    let reveal_deadline_slot: u64 = 200;
+    let finalize_deadline_slot: u64 = 300;
+
+    let initial_state = EpochState {
+        epoch_id,
+        phase: EpochPhase::Commit,
+        commit_deadline_slot,
+        reveal_deadline_slot,
+        finalize_deadline_slot,
+        commitment: [0u8; 32],
+        aggregated_seed: [0u8; 32],
+        vrf_output: [0u8; 32],
+        is_finalized: false,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed: [0u8; 32],
+    };
+
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    pt.add_account(
+        epoch_state_pda,
+        Account {
+            lamports: 10_000_000,
+            data: serialize_epoch_state(&initial_state),
+            owner: program_id,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let mut ctx = pt.start_with_context().await;
+    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
+
+    // Commit during commit phase
+    let salt = [0xCC; 32];
+    let commitment = oracle::epoch::commitment_hash(&salt);
+
+    let adapter = Arc::new(BanksRpcAdapter {
+        banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
+    });
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+
+    tx_builder
+        .send_commit(commitment)
+        .await
+        .expect("send_commit should succeed");
+
+    // Advance PAST the reveal deadline
+    ctx.warp_to_slot(reveal_deadline_slot + 1).unwrap();
+    *adapter.banks.lock().await = ctx.banks_client.clone();
+
+    // Attempt reveal after deadline
+    let commit_state = oracle::epoch::CommitState { epoch_id, salt };
+    let result = tx_builder.send_reveal(&commit_state).await;
+    assert!(
+        result.is_err(),
+        "reveal after deadline should be rejected (RevealDeadlinePassed)"
+    );
 }
