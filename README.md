@@ -1,219 +1,164 @@
-#Random Dungeon
-# Verifiable Randomness Beacon on Solana
+# Random Dungeon
 
-A publicly verifiable randomness beacon on Solana.
+## Verifiable Randomness Beacon on Solana
+
+Random Dungeon is a Solana randomness beacon that combines a commit-reveal oracle, external entropy samples, and a Groth16-verified VRF-style computation. The on-chain program records epoch state, enforces timing and oracle authority, verifies the proof, and stores the finalized beacon output for downstream consumers.
 
 **Team:** Tony Fields, Ian Kammerman, Cathy Zhang
-**Course:** COMS 4995 — Sciences of Blockchain
+**Course:** COMS 4995 - Sciences of Blockchain
 
 ## Overview
 
-TODO: one-paragraph description of what the beacon does and who it's for.
+Each epoch starts with an oracle commitment, moves through a reveal window where the oracle binds its salt to an entropy manifest, and closes when the oracle submits a VRF output plus a Groth16 proof. The program is intentionally small: it does not fetch web data or hold secrets. It validates commitments, checks the registered oracle signer, verifies the SNARK proof, and stores the output.
 
 ## Design
 
-TODO: high-level description of how the system works end-to-end.
+The protocol splits responsibility between the on-chain verifier and an off-chain oracle:
 
-### On-Chain (Solana Program)
+1. `initialize_epoch` creates an epoch account, records the oracle pubkey, and sets slot deadlines.
+2. `oracle_commit` stores `SHA256(salt)` during the commit phase.
+3. The oracle gathers entropy from external sources and builds a canonical manifest.
+4. `oracle_reveal` reveals `(salt, manifest_hash)`, verifies the salt commitment, and derives the epoch seed as `SHA256("random-dungeon/oracle-seed/v1" || salt || manifest_hash)`.
+5. `finalize_epoch` verifies a Groth16 proof for the VRF-style computation and stores `v_t`.
 
-The deployed program is the verifier and record of truth. It does not fetch data or hold secrets — it only accepts submissions and verifies them.
+### On-Chain Program
 
-**State per epoch**
-- Epoch number, phase, and deadline slots (commit / reveal / finalize)
-- Oracle seed commitment, then revealed seed
-- Participant commitments and verified reveals
-- Finalized: `v_t`, VRF proof bytes, Merkle root of contributions
-- Registered oracle public key (for VRF verification)
+The Anchor program in `programs/randomness-beacon` owns the epoch state and enforces:
 
-**Instructions**
-- `initialize_epoch` — start new epoch, set deadlines
-- `oracle_commit` / `oracle_reveal` — oracle's seed commitment and reveal
-- `participant_commit` / `participant_reveal` — optional n-party contributions
-- `finalize_epoch` — submit `v_t` and VRF proof; program verifies and stores
+- Slot-gated commit, reveal, and finalize windows.
+- Oracle-only access for `oracle_commit`, `oracle_reveal`, and `finalize_epoch`.
+- Oracle salt commitment verification.
+- Storage of the entropy manifest hash, derived entropy seed, VRF output, and finalization status.
+- Groth16 verification through `groth16-solana`.
 
-**Enforced logic**
-- Phase transitions by slot number
-- Commitment verification (reveal must hash to commitment)
-- SNARK VRF proof verification on-chain via `groth16-solana`
-- Seed aggregation over valid reveals; non-revealers dropped
+### Off-Chain Oracle
 
-### Off-chain Oracle
+The Rust oracle in `oracle/` watches a configured epoch PDA through `SOLANA_RPC_URL`. In run mode it reads the epoch state, submits the commit, waits for reveal phase, builds an entropy bundle, archives the raw responses under `oracle/archive/<epoch>/`, and submits the reveal.
 
-The off-chain oracle service submits entropy seeds to the Solana program via a Helius RPC endpoint, which provides reliable transaction submission and devnet/mainnet access without running a full validator. The RPC URL is configured via the `SOLANA_RPC_URL` environment variable so providers can be swapped without code changes.
-
-A service we run that translates real-world data into on-chain submissions. It owns the VRF secret material off-chain and submits proof data to the on-chain verifier.
-
-**Per-epoch flow**
-1. Detect new epoch via RPC
-2. Submit `oracle_commit` with `H(salt)` before commit deadline
-3. Poll entropy APIs (NOAA, Open-Meteo, USGS, sports)
-4. Submit `oracle_reveal` with seed derived from API responses and salt
-5. Wait for reveal window to close
-6. Read aggregated seed from program state
-7. Compute VRF: `(v_t, proof) = VRF_sign(sk, aggregated_seed)`
-8. Submit `finalize_epoch` with `v_t` and proof
+The finalize path depends on the prover artifacts and VRF secret. The current prover path is documented in `docs/snark-vrf-integration.md`; a full local demo checklist is in `docs/demo-walkthrough.md`.
 
 ### Entropy Sources
 
-NASA API: Sun spots cant be controlled by any person, and its through NASA which is a reliable source.
-Weather API (NOAA/weather.gov API): Hard to manipulate, random and unpredictable.
+Cathy's entropy module canonicalizes several external sources into a reproducible manifest. The seed derivation is intentionally two-stage: the entropy module derives a manifest-bound seed for audit, and the protocol reveal mixes `manifest_hash` with the precommitted oracle salt before storing the on-chain epoch seed.
 
+## VRF
 
-### VRF
-
-Elliptic Curve Verifiable Random Function + SNARK
-We compute the VRF normally, then use a SNARK to prove that computation was done correctly, turning the VRF into a composable, private, and programmable building block.
-
-### ECVRF SNARK MVP
-
-This repo now includes an MVP BN254 Groth16 pipeline under `crates/`:
-
-- `vrf-core` computes a deterministic field-based VRF-like value.
-- `vrf-circuit` proves the matching field arithmetic in R1CS.
-- `setup` generates local Arkworks proving/verifying keys or imports ceremony artifacts.
-- `prover` creates a Groth16 proof and fixed-order public inputs.
-- `verifier-client` verifies proofs locally with Arkworks.
-- `ecvrf-solana-program` wires a standalone Anchor instruction to `groth16-solana`.
-- `randomness-beacon` now also verifies the same Groth16 proof inside `finalize_epoch`.
-
-The MVP intentionally does not implement full RFC 9381 ECVRF inside the circuit. It proves:
+The MVP uses a BN254 scalar-field VRF-like computation wrapped in Groth16:
 
 ```text
+alpha_hash = SHA256(alpha) reduced into Fr
 h = Poseidon(alpha_hash)
 gamma = sk * h
 beta = Poseidon(gamma)
 ```
 
-Public input order is fixed as:
+Public inputs are fixed as:
 
 ```text
 [alpha_hash, beta]
 ```
 
-The current circuit is still scalar-field-only. A later ECVRF upgrade should replace `h = Poseidon(alpha_hash)` with hash-to-curve and prove `Gamma = sk * H`.
+The current circuit is not a full RFC 9381 ECVRF. A future upgrade should replace the scalar-field shortcut with hash-to-curve and prove `Gamma = sk * H(alpha)`.
 
-For handoff/testing/integration details, see [docs/snark-vrf-integration.md](docs/snark-vrf-integration.md).
+## Security Considerations
 
-### On-Chain Verifier Status
+The oracle key is registered per epoch during `initialize_epoch`; commit, reveal, and finalize reject any other signer. This prevents arbitrary wallets from replacing the oracle's commitment, entropy reveal, or final VRF output.
 
-The repo now has a working on-chain Groth16 verifier path.
+The local random Groth16 setup is for development only. Production deployments require a real trusted setup ceremony where the toxic waste is destroyed. If the toxic waste survives, an attacker could forge proofs. The Powers of Tau phase can be reused across circuits up to its supported size, but Groth16 phase 2 is circuit-specific and must be rerun whenever the circuit changes.
 
-There are two verifier entry points:
+The entropy manifest is not stored in full on-chain. The program stores only `manifest_hash` and the derived seed; raw API responses are archived locally for audit. A production deployment should pin manifests and raw source payloads to IPFS, Arweave, or another durable archive.
 
-- `crates/solana-program`: a standalone Anchor verifier used by the local-validator test harness.
-- `programs/randomness-beacon`: the beacon program's `finalize_epoch` instruction now verifies a Groth16 proof before it stores the final VRF output.
+Participant commit/reveal is planned but optional for the MVP. Until it is wired, consumers trust that the registered oracle followed the entropy sampling procedure represented by the archived manifest.
 
-The verifier expects:
+## Why Solana
 
-```text
-proof = 256 bytes: -A || B || C
-public_inputs = [alpha_hash, beta]
-vrf_output = beta
-```
-
-`finalize_epoch` rejects invalid proofs, rejects malformed public input lists, and rejects a submitted `vrf_output` that does not match the verified `beta`.
-
-### Contribution Protocol
-
-The beacon's baseline entropy comes from the oracle. Any Solana wallet may additionally contribute entropy to an epoch via a commit-reveal scheme. Contributions are optional, the beacon finalizes with or without them, but allow consumers to reduce their trust in the oracle: a contributor who keeps their `r_i` secret until reveal has cryptographic assurance that the epoch's output incorporates their own randomness, regardless of the oracle's behavior.
-
-Participants do not pre-register. To contribute to epoch `t`, a wallet submits a `participant_commit` transaction during epoch `t`'s commit phase and a `participant_reveal` transaction during the reveal phase.
-### Epoch Timing
-
-Each epoch runs for approximately 5–10 minutes in the MVP, with an optimization target of 1–2 minutes. An epoch consists of three phases:
-
-- **Commit phase** — oracle and participants submit hash commitments. Duration: ~40% of epoch.
-- **Reveal phase** — oracle and participants reveal preimages; program verifies against commitments. Duration: ~40% of epoch.
-- **Finalize phase** — oracle submits VRF output and proof; program verifies and records. Duration: ~20% of epoch.
-
-Phase boundaries are enforced by Solana slot number, not wall-clock time. Participants who miss the reveal deadline are silently dropped and the epoch proceeds with remaining valid reveals.
-
-### On-Chain Storage
-
-Per-epoch storage is kept minimal. For each finalized epoch, the program stores:
-
-- Epoch number
-- Final beacon output `v_t`
-- VRF proof bytes
-- Merkle root of participant contributions
-- Oracle public key used for this epoch
-
-Transient state during an epoch (active commitments, pending reveals, phase deadlines) is stored in a separate working account and can be cleared after finalization. Raw API inputs are not stored on-chain; in the stretch target, their content hashes are stored on-chain with the raw data archived to IPFS or Arweave.
+Solana gives this design cheap, low-latency verification and a natural account model for epoch state. The beacon can publish frequent outputs without making proof verification or state updates prohibitively expensive for consumers.
 
 ## Milestones
 
 ### MVP
 
-TODO
+- Commit/reveal oracle with oracle-only access control.
+- Canonical entropy manifest and seed derivation.
+- Local Groth16 setup, prover, verifier client, and on-chain verifier path.
+- Local validator demo walkthrough.
 
 ### Realistic Target
 
-TODO
+- Fully scripted local demo from validator startup through finalization.
+- Unignored end-to-end oracle integration test.
+- Durable archive for entropy manifests and raw source payloads.
+- Clear operational docs for devnet deployment.
 
 ### Stretch Target
 
-TODO
-
-## Security Considerations
-
-The local random setup mode is for development only.
-
-Production Groth16 deployments require a ceremony. The security goal is that the toxic waste used to generate the proving and verifying keys is unknown after setup. If the toxic waste is retained, an attacker may forge proofs.
-
-The Powers of Tau phase can be reused across circuits up to a supported circuit size. The Groth16 phase 2 setup is circuit-specific and must be rerun whenever the circuit changes.
-
-Groth16 is attractive here because proofs are very small and verification is efficient, but its setup is circuit-specific.
-
-## Why Solana
-
-TODO
-
-## Related Work
-
-TODO
+- Participant commit/reveal contributions.
+- Anchor 0.31+ upgrade to remove the `--no-idl` workaround.
+- Full ECVRF circuit rather than the scalar-field MVP.
+- Production-grade trusted setup ceremony.
 
 ## Getting Started
 
-Generate local development keys:
+Install Rust, the Solana CLI, and Anchor 0.30.1:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+cargo install --git https://github.com/coral-xyz/anchor avm
+avm install 0.30.1
+avm use 0.30.1
+```
+
+Add the toolchains to your shell profile:
+
+```bash
+export PATH="$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"
+```
+
+Generate a local wallet if needed:
+
+```bash
+solana-keygen new --outfile ~/.config/solana/id.json --no-bip39-passphrase
+```
+
+Copy `.env.example` to `.env` and set:
+
+```text
+SOLANA_RPC_URL=http://localhost:8899
+ORACLE_KEYPAIR_PATH=~/.config/solana/id.json
+PROGRAM_ID=9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9
+EPOCH_ID=1
+ORACLE_VRF_SECRET=0x...
+PROVER_BINARY_PATH=target/release/prover
+PROVING_KEY_PATH=artifacts/proving_key.bin
+```
+
+Build with the current Anchor workaround:
+
+```bash
+anchor build --no-idl
+anchor test --skip-build
+```
+
+Anchor 0.30.1 with newer Rust has a known IDL-generation issue through `proc-macro2`, so use `anchor build --no-idl` for now. If `anchor test --skip-build` ends with a trailing `Error: No such file or directory` after tests pass, that is known post-test wrapper noise.
+
+Generate local proving artifacts:
 
 ```bash
 cargo run -p setup -- local-random
 ```
 
-Prove the MVP VRF computation:
+Prove and verify the MVP VRF computation:
 
 ```bash
-cargo run -p prover -- --sk 12345 --alpha "user supplied randomness input"
-```
-
-This writes both Arkworks-local verification files and Solana-ready byte files:
-
-```text
-artifacts/proof.bin                  # compressed Arkworks proof for verifier-client
-artifacts/public_inputs.json          # hex public inputs for verifier-client
-artifacts/proof_solana.bin            # 256 bytes: -A || B || C for groth16-solana
-artifacts/public_inputs_solana.json   # [[u8; 32]; 2] in [alpha_hash, beta] order
-artifacts/public_inputs_solana.bin    # 64 bytes: alpha_hash || beta
-```
-
-Verify locally:
-
-```bash
+cargo run -p prover -- --sk 12345 --alpha "test randomness"
 cargo run -p verifier-client -- \
   --proof artifacts/proof.bin \
   --public-inputs artifacts/public_inputs.json \
   --vk artifacts/verifying_key.bin
 ```
 
-Import ceremony output after running the `snarkjs` flow in [ceremony/README.md](ceremony/README.md):
-
-```bash
-cargo run -p setup -- import-ceremony \
-  --zkey ceremony/zkey/vrf_0001.zkey \
-  --vk-json artifacts/verifying_key.json
-```
-
-Run core tests:
+Run focused Rust tests:
 
 ```bash
 cargo test -p vrf-core
@@ -221,21 +166,16 @@ cargo test -p vrf-circuit
 cargo test -p setup
 cargo test -p prover
 cargo test -p verifier-client
+cargo test -p oracle
 ```
 
-Run the on-chain verifier local-validator test:
+## Related Work
 
-```bash
-cargo run -p prover -- --sk 12345 --alpha "test randomness"
-cargo test --manifest-path crates/solana-local-validator-test/Cargo.toml
-```
-
-The first command refreshes `artifacts/proof_solana.bin` and `artifacts/public_inputs_solana.bin`; the local-validator test includes those files and submits them to the on-chain verifier. Expected result:
-
-```text
-test local_validator_accepts_real_vrf_proof ... ok
-```
+- Chainlink VRF for production oracle-delivered randomness.
+- drand for public threshold randomness.
+- Solana `groth16-solana` examples for efficient BN254 proof verification.
+- RFC 9381 ECVRF as the target shape for a fuller circuit.
 
 ## License
 
-Apache 2.0
+Course project code. Add a project license before publishing beyond the class context.

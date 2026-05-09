@@ -31,6 +31,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use tracing::{error, info, warn};
 
+use crate::entropy::seed::{archive, build_entropy_bundle};
 use crate::epoch::{CommitState, EpochMonitor};
 use crate::finalize;
 use crate::rpc::RpcProvider;
@@ -151,9 +152,33 @@ pub async fn run_loop<R: RpcProvider>(
                 let cs = commit_state
                     .as_ref()
                     .expect("SendReveal requires commit_state");
-                info!(epoch_id, "reveal phase: submitting salt");
+                info!(epoch_id, "reveal phase: building entropy bundle");
 
-                match tokio::time::timeout(RPC_TIMEOUT, tx_builder.send_reveal(cs)).await {
+                let bundle = match build_entropy_bundle(epoch_id).await {
+                    Ok(bundle) => bundle,
+                    Err(e) => {
+                        error!(error = %e, "failed to build entropy bundle, will retry");
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue;
+                    }
+                };
+                if let Err(e) = archive(&bundle, Path::new("oracle/archive")) {
+                    error!(error = %e, "failed to archive entropy bundle, will retry");
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                    continue;
+                }
+
+                info!(
+                    manifest_hash = %hex::encode(bundle.manifest_hash),
+                    "reveal phase: submitting salt and manifest hash"
+                );
+
+                match tokio::time::timeout(
+                    RPC_TIMEOUT,
+                    tx_builder.send_reveal(cs, bundle.manifest_hash),
+                )
+                .await
+                {
                     Ok(Ok(sig)) => {
                         info!(%sig, "oracle_reveal confirmed");
                         commit_state = None;
@@ -204,9 +229,15 @@ pub async fn run_loop<R: RpcProvider>(
             }
             Action::WaitForNextEpoch => {
                 if commit_state.is_none() && phase.is_some() && phase != Some(EpochPhase::Closed) {
-                    warn!(epoch_id, "missed this epoch's commit window, waiting for next epoch");
+                    warn!(
+                        epoch_id,
+                        "missed this epoch's commit window, waiting for next epoch"
+                    );
                 }
-                info!(epoch_id, "epoch closed or not initialized, waiting for next epoch");
+                info!(
+                    epoch_id,
+                    "epoch closed or not initialized, waiting for next epoch"
+                );
                 // In a full implementation this would scan for the next epoch PDA.
                 // For now, exit cleanly since we only handle a single epoch.
                 return Ok(());

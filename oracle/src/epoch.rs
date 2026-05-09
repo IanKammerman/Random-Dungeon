@@ -34,10 +34,11 @@ impl CommitState {
 }
 
 pub fn commitment_hash(salt: &[u8; 32]) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(salt);
-    hasher.finalize().into()
+    solana_sdk::hash::hashv(&[salt]).to_bytes()
+}
+
+pub fn oracle_seed(salt: &[u8; 32], manifest_hash: &[u8; 32]) -> [u8; 32] {
+    solana_sdk::hash::hashv(&[b"random-dungeon/oracle-seed/v1", salt, manifest_hash]).to_bytes()
 }
 
 pub struct EpochMonitor<'a, R: RpcProvider + ?Sized> {
@@ -170,6 +171,7 @@ mod tests {
             commit_deadline_slot: 100,
             reveal_deadline_slot: 200,
             finalize_deadline_slot: 300,
+            oracle_pubkey: Pubkey::new_unique(),
             commitment: [0u8; 32],
             aggregated_seed: [0u8; 32],
             vrf_output: [0u8; 32],
@@ -264,7 +266,7 @@ mod tests {
 
     #[test]
     fn commitment_hash_is_sha256_of_salt() {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let salt = [7u8; 32];
         let expected: [u8; 32] = Sha256::new().chain_update(salt).finalize().into();
         assert_eq!(commitment_hash(&salt), expected);
@@ -272,7 +274,28 @@ mod tests {
 
     #[test]
     fn commit_state_produces_correct_commitment() {
-        let cs = CommitState { epoch_id: 5, salt: [0xAB; 32] };
+        let cs = CommitState {
+            epoch_id: 5,
+            salt: [0xAB; 32],
+        };
         assert_eq!(cs.commitment(), commitment_hash(&[0xAB; 32]));
+    }
+
+    #[test]
+    fn oracle_seed_mixes_salt_and_manifest_hash() {
+        let salt = [0xAB; 32];
+        let manifest_hash = [0xCD; 32];
+        assert_eq!(
+            oracle_seed(&salt, &manifest_hash),
+            oracle_seed(&salt, &manifest_hash)
+        );
+        assert_ne!(
+            oracle_seed(&salt, &manifest_hash),
+            oracle_seed(&[0xAC; 32], &manifest_hash)
+        );
+        assert_ne!(
+            oracle_seed(&salt, &manifest_hash),
+            oracle_seed(&salt, &[0xCE; 32])
+        );
     }
 }

@@ -9,6 +9,8 @@ use solana_sdk::{
     hash::Hash,
     pubkey::Pubkey,
     signature::{Keypair, Signature},
+    signer::Signer,
+    system_program,
     transaction::Transaction,
 };
 
@@ -57,6 +59,19 @@ fn epoch_state_pda(program_id: &Pubkey, epoch_id: u64) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[b"epoch", &epoch_id.to_le_bytes()], program_id)
 }
 
+fn add_funded_signer(pt: &mut ProgramTest, signer: &Keypair) {
+    pt.add_account(
+        signer.pubkey(),
+        Account {
+            lamports: 10_000_000,
+            data: Vec::new(),
+            owner: system_program::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+}
+
 #[tokio::test]
 async fn oracle_reads_initialized_epoch_state() {
     let program_id = randomness_beacon::ID;
@@ -68,6 +83,7 @@ async fn oracle_reads_initialized_epoch_state() {
         commit_deadline_slot: 500,
         reveal_deadline_slot: 1000,
         finalize_deadline_slot: 1500,
+        oracle_pubkey: Pubkey::new_unique(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -146,10 +162,12 @@ async fn oracle_reads_none_for_missing_epoch() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn send_commit_stores_commitment_on_chain() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 1;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     // Load the real BPF program from target/deploy/
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
@@ -163,6 +181,7 @@ async fn send_commit_stores_commitment_on_chain() {
         commit_deadline_slot: 10_000,
         reveal_deadline_slot: 20_000,
         finalize_deadline_slot: 30_000,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -180,9 +199,18 @@ async fn send_commit_stores_commitment_on_chain() {
             rent_epoch: 0,
         },
     );
+    pt.add_account(
+        oracle.pubkey(),
+        Account {
+            lamports: 10_000_000,
+            data: Vec::new(),
+            owner: system_program::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
 
-    let (banks_client, payer, _blockhash) = pt.start().await;
-    let payer_copy = Keypair::from_bytes(&payer.to_bytes()).unwrap();
+    let (banks_client, _payer, _blockhash) = pt.start().await;
 
     let adapter = BanksRpcAdapter {
         banks: tokio::sync::Mutex::new(banks_client),
@@ -193,7 +221,7 @@ async fn send_commit_stores_commitment_on_chain() {
     let salt = [42u8; 32];
     let commitment = oracle::epoch::commitment_hash(&salt);
 
-    let tx_builder = oracle::tx::TxBuilder::new(&adapter, &payer_copy, program_id, epoch_state_pda);
+    let tx_builder = oracle::tx::TxBuilder::new(&adapter, &oracle, program_id, epoch_state_pda);
 
     let sig = tx_builder
         .send_commit(commitment)
@@ -214,10 +242,12 @@ async fn send_commit_stores_commitment_on_chain() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn commit_reveal_full_cycle() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 2;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     let commit_deadline_slot: u64 = 100;
     let reveal_deadline_slot: u64 = 200;
@@ -229,6 +259,7 @@ async fn commit_reveal_full_cycle() {
         commit_deadline_slot,
         reveal_deadline_slot,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -238,6 +269,7 @@ async fn commit_reveal_full_cycle() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -250,7 +282,6 @@ async fn commit_reveal_full_cycle() {
     );
 
     let mut ctx = pt.start_with_context().await;
-    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
 
     // --- Commit phase: submit commitment ---
     let commit_state = oracle::epoch::CommitState {
@@ -264,7 +295,7 @@ async fn commit_reveal_full_cycle() {
     });
 
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     let commit_sig = tx_builder
         .send_commit(commitment)
@@ -277,8 +308,9 @@ async fn commit_reveal_full_cycle() {
     *adapter.banks.lock().await = ctx.banks_client.clone();
 
     // --- Reveal phase: submit salt ---
+    let manifest_hash = [0x24; 32];
     let reveal_sig = tx_builder
-        .send_reveal(&commit_state)
+        .send_reveal(&commit_state, manifest_hash)
         .await
         .expect("send_reveal should succeed in reveal phase");
     assert_ne!(reveal_sig, Signature::default());
@@ -290,14 +322,21 @@ async fn commit_reveal_full_cycle() {
         .await
         .expect("read_epoch_state failed")
         .expect("account should exist");
-    assert_eq!(state.entropy_seed, commit_state.salt);
+    assert_eq!(state.entropy_manifest_hash, manifest_hash);
+    assert_eq!(
+        state.entropy_seed,
+        oracle::epoch::oracle_seed(&commit_state.salt, &manifest_hash)
+    );
+    assert_eq!(state.aggregated_seed, state.entropy_seed);
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn reveal_with_wrong_salt_rejected() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 3;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     let commit_deadline_slot: u64 = 100;
     let reveal_deadline_slot: u64 = 200;
@@ -309,6 +348,7 @@ async fn reveal_with_wrong_salt_rejected() {
         commit_deadline_slot,
         reveal_deadline_slot,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -318,6 +358,7 @@ async fn reveal_with_wrong_salt_rejected() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -330,7 +371,6 @@ async fn reveal_with_wrong_salt_rejected() {
     );
 
     let mut ctx = pt.start_with_context().await;
-    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
 
     // Commit with salt A
     let real_salt = [0xAA; 32];
@@ -340,7 +380,7 @@ async fn reveal_with_wrong_salt_rejected() {
         banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
     });
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     tx_builder
         .send_commit(commitment)
@@ -356,7 +396,9 @@ async fn reveal_with_wrong_salt_rejected() {
         epoch_id,
         salt: [0xBB; 32],
     };
-    let result = tx_builder.send_reveal(&wrong_commit_state).await;
+    let result = tx_builder
+        .send_reveal(&wrong_commit_state, [0x35; 32])
+        .await;
     assert!(
         result.is_err(),
         "reveal with wrong salt should be rejected (CommitmentMismatch)"
@@ -364,10 +406,12 @@ async fn reveal_with_wrong_salt_rejected() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn reveal_after_deadline_rejected() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 4;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     let commit_deadline_slot: u64 = 100;
     let reveal_deadline_slot: u64 = 200;
@@ -379,6 +423,7 @@ async fn reveal_after_deadline_rejected() {
         commit_deadline_slot,
         reveal_deadline_slot,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -388,6 +433,7 @@ async fn reveal_after_deadline_rejected() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -400,7 +446,6 @@ async fn reveal_after_deadline_rejected() {
     );
 
     let mut ctx = pt.start_with_context().await;
-    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
 
     // Commit during commit phase
     let salt = [0xCC; 32];
@@ -410,7 +455,7 @@ async fn reveal_after_deadline_rejected() {
         banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
     });
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     tx_builder
         .send_commit(commitment)
@@ -423,7 +468,7 @@ async fn reveal_after_deadline_rejected() {
 
     // Attempt reveal after deadline
     let commit_state = oracle::epoch::CommitState { epoch_id, salt };
-    let result = tx_builder.send_reveal(&commit_state).await;
+    let result = tx_builder.send_reveal(&commit_state, [0x45; 32]).await;
     assert!(
         result.is_err(),
         "reveal after deadline should be rejected (RevealDeadlinePassed)"
@@ -431,10 +476,12 @@ async fn reveal_after_deadline_rejected() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn finalize_after_deadline_rejected() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 5;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     // Use a very low deadline so the validator's initial slot already exceeds it
     let finalize_deadline_slot: u64 = 1;
@@ -445,6 +492,7 @@ async fn finalize_after_deadline_rejected() {
         commit_deadline_slot: 0,
         reveal_deadline_slot: 0,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -454,6 +502,7 @@ async fn finalize_after_deadline_rejected() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -466,7 +515,6 @@ async fn finalize_after_deadline_rejected() {
     );
 
     let mut ctx = pt.start_with_context().await;
-    let payer = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
 
     // Warp well past the deadline to be certain
     ctx.warp_to_slot(100).unwrap();
@@ -474,7 +522,7 @@ async fn finalize_after_deadline_rejected() {
         banks: tokio::sync::Mutex::new(ctx.banks_client.clone()),
     });
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     // Dummy proof — the deadline check fires before the verifier
     let dummy_vrf = VrfOutput {
@@ -491,10 +539,12 @@ async fn finalize_after_deadline_rejected() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn finalize_twice_rejected() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 6;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     let finalize_deadline_slot: u64 = 10_000;
 
@@ -505,6 +555,7 @@ async fn finalize_twice_rejected() {
         commit_deadline_slot: 100,
         reveal_deadline_slot: 200,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0x11; 32],
@@ -514,6 +565,7 @@ async fn finalize_twice_rejected() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -525,14 +577,13 @@ async fn finalize_twice_rejected() {
         },
     );
 
-    let (banks_client, payer, _blockhash) = pt.start().await;
-    let payer = Keypair::from_bytes(&payer.to_bytes()).unwrap();
+    let (banks_client, _payer, _blockhash) = pt.start().await;
 
     let adapter = Arc::new(BanksRpcAdapter {
         banks: tokio::sync::Mutex::new(banks_client),
     });
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     // Dummy proof — the already-finalized check fires before the verifier
     let dummy_vrf = VrfOutput {
@@ -549,10 +600,12 @@ async fn finalize_twice_rejected() {
 }
 
 #[tokio::test]
+#[ignore = "requires `anchor build --no-idl` to create target/deploy/randomness_beacon.so"]
 async fn finalize_with_wrong_alpha_hash_rejected() {
     let program_id = randomness_beacon::ID;
     let epoch_id: u64 = 7;
     let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+    let oracle = Keypair::new();
 
     let finalize_deadline_slot: u64 = 10_000;
 
@@ -562,8 +615,9 @@ async fn finalize_with_wrong_alpha_hash_rejected() {
         epoch_id,
         phase: EpochPhase::Finalize,
         commit_deadline_slot: 100,
-        reveal_deadline_slot: 200,
+        reveal_deadline_slot: 0,
         finalize_deadline_slot,
+        oracle_pubkey: oracle.pubkey(),
         commitment: [0u8; 32],
         aggregated_seed: [0u8; 32],
         vrf_output: [0u8; 32],
@@ -573,6 +627,7 @@ async fn finalize_with_wrong_alpha_hash_rejected() {
     };
 
     let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    add_funded_signer(&mut pt, &oracle);
     pt.add_account(
         epoch_state_pda,
         Account {
@@ -584,14 +639,13 @@ async fn finalize_with_wrong_alpha_hash_rejected() {
         },
     );
 
-    let (banks_client, payer, _blockhash) = pt.start().await;
-    let payer = Keypair::from_bytes(&payer.to_bytes()).unwrap();
+    let (banks_client, _payer, _blockhash) = pt.start().await;
 
     let adapter = Arc::new(BanksRpcAdapter {
         banks: tokio::sync::Mutex::new(banks_client),
     });
     let tx_builder =
-        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &oracle, program_id, epoch_state_pda);
 
     // Submit finalize with a wrong alpha_hash (all zeros instead of the correct
     // sha256(entropy_seed) mod r). The deadline and already-finalized guards pass,

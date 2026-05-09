@@ -21,45 +21,60 @@ pub mod randomness_beacon {
         state.commit_deadline_slot = commit_deadline_slot;
         state.reveal_deadline_slot = reveal_deadline_slot;
         state.finalize_deadline_slot = finalize_deadline_slot;
+        state.oracle_pubkey = ctx.accounts.authority.key();
         state.commitment = [0u8; 32];
         state.aggregated_seed = [0u8; 32];
         state.vrf_output = [0u8; 32];
         state.is_finalized = false;
+        state.entropy_manifest_hash = [0u8; 32];
+        state.entropy_seed = [0u8; 32];
         Ok(())
     }
 
     pub fn oracle_commit(ctx: Context<OracleCommit>, commitment: [u8; 32]) -> Result<()> {
         let clock = Clock::get()?;
         let state = &mut ctx.accounts.epoch_state;
+        require_oracle(&ctx.accounts.oracle, state)?;
         require!(
             clock.slot <= state.commit_deadline_slot,
             BeaconError::CommitDeadlinePassed
         );
         state.commitment = commitment;
+        state.phase = EpochPhase::Commit;
         Ok(())
     }
 
-    pub fn oracle_reveal(ctx: Context<OracleReveal>, seed: [u8; 32]) -> Result<()> {
+    pub fn oracle_reveal(
+        ctx: Context<OracleReveal>,
+        salt: [u8; 32],
+        manifest_hash: [u8; 32],
+    ) -> Result<()> {
         let clock = Clock::get()?;
         let state = &mut ctx.accounts.epoch_state;
+        require_oracle(&ctx.accounts.oracle, state)?;
+        require!(state.commitment != [0u8; 32], BeaconError::CommitmentNotSet);
+        require!(
+            state.entropy_seed == [0u8; 32],
+            BeaconError::AlreadyRevealed
+        );
+        require!(
+            clock.slot > state.commit_deadline_slot,
+            BeaconError::RevealBeforeCommitDeadline
+        );
         require!(
             clock.slot <= state.reveal_deadline_slot,
             BeaconError::RevealDeadlinePassed
         );
         require!(
-            state.commitment != [0u8; 32],
-            BeaconError::CommitmentNotSet
-        );
-        require!(
-            state.entropy_seed == [0u8; 32],
-            BeaconError::AlreadyRevealed
-        );
-        let hash = anchor_lang::solana_program::hash::hash(&seed);
-        require!(
-            hash.to_bytes() == state.commitment,
+            commitment_hash(&salt) == state.commitment,
             BeaconError::CommitmentMismatch
         );
+
+        let seed = oracle_seed(&salt, &manifest_hash);
+        state.entropy_manifest_hash = manifest_hash;
         state.entropy_seed = seed;
+        state.aggregated_seed = seed;
+        state.phase = EpochPhase::Reveal;
         Ok(())
     }
 
@@ -71,6 +86,11 @@ pub mod randomness_beacon {
     ) -> Result<()> {
         let clock = Clock::get()?;
         let state = &mut ctx.accounts.epoch_state;
+        require_oracle(&ctx.accounts.oracle, state)?;
+        require!(
+            clock.slot > state.reveal_deadline_slot,
+            BeaconError::FinalizeBeforeRevealDeadline
+        );
         require!(
             clock.slot <= state.finalize_deadline_slot,
             BeaconError::FinalizeDeadlinePassed
@@ -95,6 +115,27 @@ pub mod randomness_beacon {
         state.phase = EpochPhase::Closed;
         Ok(())
     }
+}
+
+fn require_oracle(oracle: &Signer<'_>, state: &EpochState) -> Result<()> {
+    require!(
+        oracle.key() == state.oracle_pubkey,
+        BeaconError::UnauthorizedOracle
+    );
+    Ok(())
+}
+
+fn commitment_hash(salt: &[u8; 32]) -> [u8; 32] {
+    anchor_lang::solana_program::hash::hashv(&[salt]).to_bytes()
+}
+
+fn oracle_seed(salt: &[u8; 32], manifest_hash: &[u8; 32]) -> [u8; 32] {
+    anchor_lang::solana_program::hash::hashv(&[
+        b"random-dungeon/oracle-seed/v1",
+        salt,
+        manifest_hash,
+    ])
+    .to_bytes()
 }
 
 // --- Account contexts ---
@@ -143,16 +184,24 @@ pub struct FinalizeEpoch<'info> {
 
 #[error_code]
 pub enum BeaconError {
+    #[msg("signer is not the oracle registered for this epoch")]
+    UnauthorizedOracle,
     #[msg("Commit deadline has passed")]
     CommitDeadlinePassed,
+    #[msg("Reveal attempted before the commit deadline")]
+    RevealBeforeCommitDeadline,
     #[msg("Reveal deadline has passed")]
     RevealDeadlinePassed,
     #[msg("No commitment has been set for this epoch")]
     CommitmentNotSet,
     #[msg("Oracle has already revealed for this epoch")]
     AlreadyRevealed,
-    #[msg("SHA-256(seed) does not match stored commitment")]
+    #[msg("Oracle reveal does not match the committed salt")]
     CommitmentMismatch,
+    #[msg("Finalize attempted before the reveal deadline")]
+    FinalizeBeforeRevealDeadline,
+    #[msg("Finalize deadline has passed")]
+    FinalizeDeadlinePassed,
     #[msg("expected a 256 byte Groth16 proof encoded as A || B || C")]
     InvalidProofLength,
     #[msg("expected exactly two public inputs: [alpha_hash, beta]")]
@@ -161,8 +210,6 @@ pub enum BeaconError {
     Groth16VerificationFailed,
     #[msg("verified VRF output does not match the submitted output")]
     VrfOutputMismatch,
-    #[msg("Finalize deadline has passed")]
-    FinalizeDeadlinePassed,
     #[msg("Epoch has already been finalized")]
     AlreadyFinalized,
     #[msg("public_inputs[0] does not match sha256(entropy_seed) reduced mod BN254 r")]
@@ -187,6 +234,7 @@ pub struct EpochState {
     pub commit_deadline_slot: u64,
     pub reveal_deadline_slot: u64,
     pub finalize_deadline_slot: u64,
+    pub oracle_pubkey: Pubkey,
     pub commitment: [u8; 32],
     pub aggregated_seed: [u8; 32],
     pub vrf_output: [u8; 32],
@@ -216,10 +264,18 @@ pub fn reduce_be_bytes_mod_r(bytes: &[u8; 32]) -> [u8; 32] {
 
 fn be_bytes_to_limbs(bytes: &[u8; 32]) -> [u64; 4] {
     [
-        u64::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]),
-        u64::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]]),
-        u64::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23]]),
-        u64::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31]]),
+        u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+        u64::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ]),
+        u64::from_be_bytes([
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+        ]),
+        u64::from_be_bytes([
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
+        ]),
     ]
 }
 
