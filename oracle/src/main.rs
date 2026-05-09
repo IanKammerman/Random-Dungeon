@@ -54,7 +54,17 @@ async fn cmd_run() -> Result<()> {
         .parse::<u64>()
         .context("EPOCH_ID is not a valid u64")?;
 
-    oracle::runner::run_loop(&rpc, &payer, cfg.program_id, epoch_id).await
+    oracle::runner::run_loop(
+        &rpc,
+        &payer,
+        cfg.program_id,
+        epoch_id,
+        &cfg.vrf,
+        &cfg.vrf_secret_hex,
+        &cfg.prover_binary_path,
+        &cfg.proving_key_path,
+    )
+    .await
 }
 
 async fn cmd_commit_once() -> Result<()> {

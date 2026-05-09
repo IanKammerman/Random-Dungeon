@@ -547,3 +547,32 @@ async fn finalize_twice_rejected() {
         "finalize on already-finalized epoch should be rejected (AlreadyFinalized)"
     );
 }
+
+// End-to-end finalize integration test.
+//
+// This test is #[ignore] because it requires external setup:
+//   1. `cargo build -p prover` (produces target/debug/prover binary)
+//   2. `cargo run -p setup -- local-random --artifacts artifacts/`
+//      (produces artifacts/proving_key.bin)
+//
+// To run manually:
+//   cargo test -p oracle --test epoch_integration finalize_end_to_end -- --ignored
+//
+// What it would do:
+//   - Pre-populate an epoch PDA in Finalize phase with a known entropy_seed
+//   - Invoke oracle::finalize::run_finalize with a real prover subprocess
+//   - Submit the resulting proof to the BPF program via BanksClient
+//   - Assert the epoch transitions to Closed with the expected vrf_output
+//
+// This exercises the full pipeline: oracle VRF evaluation -> prover subprocess ->
+// Groth16 proof generation -> on-chain Groth16 verification. It is the definitive
+// test that all components agree on the same cryptographic computation.
+#[tokio::test]
+#[ignore]
+async fn finalize_end_to_end() {
+    // See comment above for prerequisites. This test requires:
+    // - target/debug/prover binary
+    // - artifacts/proving_key.bin
+    // Both are produced by `cargo build -p prover` and `cargo run -p setup -- local-random`.
+    todo!("implement once prover binary and proving_key.bin are available in CI");
+}

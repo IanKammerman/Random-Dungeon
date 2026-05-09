@@ -12,16 +12,18 @@
 //      SOLANA_RPC_URL=http://localhost:8899 \
 //      ORACLE_KEYPAIR_PATH=~/.config/solana/id.json \
 //      PROGRAM_ID=9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9 \
+//      ORACLE_VRF_SECRET=0x... \
 //      EPOCH_ID=1 \
 //      cargo run -p oracle -- run
 //
 // 5. Observe logs: the oracle should detect phases, commit, wait, reveal, then
-//    log the finalize stub and wait for the next epoch.
+//    generate a proof and submit finalize_epoch.
 //
 // There is no automated integration test for the long-running loop because it
 // requires a real validator with advancing slots. The per-iteration decision
 // logic is tested via unit tests on `decide_action`.
 
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -30,8 +32,10 @@ use solana_sdk::signature::Keypair;
 use tracing::{error, info, warn};
 
 use crate::epoch::{CommitState, EpochMonitor};
+use crate::finalize;
 use crate::rpc::RpcProvider;
 use crate::tx::TxBuilder;
+use crate::vrf::OracleVrf;
 use randomness_beacon::EpochPhase;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -41,12 +45,16 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum Action {
     SendCommit,
     SendReveal,
-    LogFinalizeStub,
+    SendFinalize,
     WaitForNextEpoch,
     Idle,
 }
 
-pub fn decide_action(phase: Option<EpochPhase>, has_committed: bool) -> Action {
+pub fn decide_action(
+    phase: Option<EpochPhase>,
+    has_committed: bool,
+    has_finalized: bool,
+) -> Action {
     match phase {
         Some(EpochPhase::Commit) => {
             if has_committed {
@@ -62,16 +70,27 @@ pub fn decide_action(phase: Option<EpochPhase>, has_committed: bool) -> Action {
                 Action::WaitForNextEpoch
             }
         }
-        Some(EpochPhase::Finalize) => Action::LogFinalizeStub,
+        Some(EpochPhase::Finalize) => {
+            if has_finalized {
+                Action::Idle
+            } else {
+                Action::SendFinalize
+            }
+        }
         Some(EpochPhase::Closed) | None => Action::WaitForNextEpoch,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_loop<R: RpcProvider>(
     rpc: &R,
     payer: &Keypair,
     program_id: Pubkey,
     epoch_id: u64,
+    vrf: &OracleVrf,
+    vrf_secret_hex: &str,
+    prover_binary: &Path,
+    proving_key_path: &Path,
 ) -> Result<()> {
     let (epoch_state_address, _bump) =
         Pubkey::find_program_address(&[b"epoch", &epoch_id.to_le_bytes()], &program_id);
@@ -80,6 +99,7 @@ pub async fn run_loop<R: RpcProvider>(
     let tx_builder = TxBuilder::new(rpc, payer, program_id, epoch_state_address);
 
     let mut commit_state: Option<CommitState> = None;
+    let mut has_finalized = false;
 
     info!(epoch_id, "oracle service started, monitoring epoch");
 
@@ -106,7 +126,7 @@ pub async fn run_loop<R: RpcProvider>(
             }
         };
 
-        let action = decide_action(phase, commit_state.is_some());
+        let action = decide_action(phase, commit_state.is_some(), has_finalized);
 
         match action {
             Action::SendCommit => {
@@ -146,13 +166,41 @@ pub async fn run_loop<R: RpcProvider>(
                     }
                 }
             }
-            Action::LogFinalizeStub => {
-                // TODO(slice-4): call vrf_core::compute_vrf, generate Groth16 proof,
-                // submit finalize_epoch with proof + public_inputs.
-                info!(epoch_id, "finalize phase: would finalize, slice 4 not yet implemented");
-                commit_state = None;
-                tokio::time::sleep(POLL_INTERVAL).await;
-                continue;
+            Action::SendFinalize => {
+                info!(epoch_id, "finalize phase: generating proof and submitting");
+
+                let epoch_state = match monitor.read_epoch_state().await {
+                    Ok(Some(s)) => s,
+                    Ok(None) => {
+                        error!("epoch state disappeared during finalize");
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue;
+                    }
+                    Err(e) => {
+                        error!(error = %e, "failed to read epoch state for finalize");
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue;
+                    }
+                };
+
+                match finalize::run_finalize(
+                    &tx_builder,
+                    vrf,
+                    vrf_secret_hex,
+                    prover_binary,
+                    proving_key_path,
+                    &epoch_state.entropy_seed,
+                )
+                .await
+                {
+                    Ok(sig) => {
+                        info!(%sig, "finalize_epoch confirmed");
+                        has_finalized = true;
+                    }
+                    Err(e) => {
+                        error!(error = %e, "finalize failed, will retry");
+                    }
+                }
             }
             Action::WaitForNextEpoch => {
                 if commit_state.is_none() && phase.is_some() && phase != Some(EpochPhase::Closed) {
@@ -176,39 +224,75 @@ mod tests {
 
     #[test]
     fn commit_phase_no_prior_commit_sends_commit() {
-        assert_eq!(decide_action(Some(EpochPhase::Commit), false), Action::SendCommit);
+        assert_eq!(
+            decide_action(Some(EpochPhase::Commit), false, false),
+            Action::SendCommit
+        );
     }
 
     #[test]
     fn commit_phase_already_committed_idles() {
-        assert_eq!(decide_action(Some(EpochPhase::Commit), true), Action::Idle);
+        assert_eq!(
+            decide_action(Some(EpochPhase::Commit), true, false),
+            Action::Idle
+        );
     }
 
     #[test]
     fn reveal_phase_with_commit_sends_reveal() {
-        assert_eq!(decide_action(Some(EpochPhase::Reveal), true), Action::SendReveal);
+        assert_eq!(
+            decide_action(Some(EpochPhase::Reveal), true, false),
+            Action::SendReveal
+        );
     }
 
     #[test]
     fn reveal_phase_without_commit_waits_for_next_epoch() {
-        assert_eq!(decide_action(Some(EpochPhase::Reveal), false), Action::WaitForNextEpoch);
+        assert_eq!(
+            decide_action(Some(EpochPhase::Reveal), false, false),
+            Action::WaitForNextEpoch
+        );
     }
 
     #[test]
-    fn finalize_phase_logs_stub() {
-        assert_eq!(decide_action(Some(EpochPhase::Finalize), false), Action::LogFinalizeStub);
-        assert_eq!(decide_action(Some(EpochPhase::Finalize), true), Action::LogFinalizeStub);
+    fn finalize_phase_not_yet_finalized_sends_finalize() {
+        assert_eq!(
+            decide_action(Some(EpochPhase::Finalize), false, false),
+            Action::SendFinalize
+        );
+        assert_eq!(
+            decide_action(Some(EpochPhase::Finalize), true, false),
+            Action::SendFinalize
+        );
+    }
+
+    #[test]
+    fn finalize_phase_already_finalized_idles() {
+        assert_eq!(
+            decide_action(Some(EpochPhase::Finalize), false, true),
+            Action::Idle
+        );
+        assert_eq!(
+            decide_action(Some(EpochPhase::Finalize), true, true),
+            Action::Idle
+        );
     }
 
     #[test]
     fn closed_phase_waits_for_next_epoch() {
-        assert_eq!(decide_action(Some(EpochPhase::Closed), false), Action::WaitForNextEpoch);
-        assert_eq!(decide_action(Some(EpochPhase::Closed), true), Action::WaitForNextEpoch);
+        assert_eq!(
+            decide_action(Some(EpochPhase::Closed), false, false),
+            Action::WaitForNextEpoch
+        );
+        assert_eq!(
+            decide_action(Some(EpochPhase::Closed), true, false),
+            Action::WaitForNextEpoch
+        );
     }
 
     #[test]
     fn no_epoch_waits_for_next_epoch() {
-        assert_eq!(decide_action(None, false), Action::WaitForNextEpoch);
-        assert_eq!(decide_action(None, true), Action::WaitForNextEpoch);
+        assert_eq!(decide_action(None, false, false), Action::WaitForNextEpoch);
+        assert_eq!(decide_action(None, true, false), Action::WaitForNextEpoch);
     }
 }

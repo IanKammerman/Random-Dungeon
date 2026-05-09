@@ -2,6 +2,7 @@ pub mod config;
 pub mod entropy;
 pub mod epoch;
 pub mod error;
+pub mod finalize;
 pub mod rpc;
 pub mod runner;
 pub mod tx;
