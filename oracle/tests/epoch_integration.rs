@@ -548,6 +548,68 @@ async fn finalize_twice_rejected() {
     );
 }
 
+#[tokio::test]
+async fn finalize_with_wrong_alpha_hash_rejected() {
+    let program_id = randomness_beacon::ID;
+    let epoch_id: u64 = 7;
+    let (epoch_state_pda, _bump) = epoch_state_pda(&program_id, epoch_id);
+
+    let finalize_deadline_slot: u64 = 10_000;
+
+    // Pre-populate epoch with a known entropy_seed
+    let entropy_seed = [0xDD; 32];
+    let initial_state = EpochState {
+        epoch_id,
+        phase: EpochPhase::Finalize,
+        commit_deadline_slot: 100,
+        reveal_deadline_slot: 200,
+        finalize_deadline_slot,
+        commitment: [0u8; 32],
+        aggregated_seed: [0u8; 32],
+        vrf_output: [0u8; 32],
+        is_finalized: false,
+        entropy_manifest_hash: [0u8; 32],
+        entropy_seed,
+    };
+
+    let mut pt = ProgramTest::new("randomness_beacon", program_id, None);
+    pt.add_account(
+        epoch_state_pda,
+        Account {
+            lamports: 10_000_000,
+            data: serialize_epoch_state(&initial_state),
+            owner: program_id,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let (banks_client, payer, _blockhash) = pt.start().await;
+    let payer = Keypair::from_bytes(&payer.to_bytes()).unwrap();
+
+    let adapter = Arc::new(BanksRpcAdapter {
+        banks: tokio::sync::Mutex::new(banks_client),
+    });
+    let tx_builder =
+        oracle::tx::TxBuilder::new(adapter.as_ref(), &payer, program_id, epoch_state_pda);
+
+    // Submit finalize with a wrong alpha_hash (all zeros instead of the correct
+    // sha256(entropy_seed) mod r). The deadline and already-finalized guards pass,
+    // but the alpha_hash binding check should reject it.
+    let wrong_alpha_hash = [0u8; 32];
+    let dummy_vrf = VrfOutput {
+        output: [0u8; 32],
+        proof: vec![0u8; 256],
+        public_inputs: vec![wrong_alpha_hash, [0u8; 32]],
+    };
+
+    let result = tx_builder.send_finalize(&dummy_vrf).await;
+    assert!(
+        result.is_err(),
+        "finalize with wrong alpha_hash should be rejected (AlphaHashMismatch)"
+    );
+}
+
 // End-to-end finalize integration test.
 //
 // This test is #[ignore] because it requires external setup:
