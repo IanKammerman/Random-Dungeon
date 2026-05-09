@@ -4,10 +4,13 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use solana_sdk::pubkey::Pubkey;
 
+use crate::vrf::OracleVrf;
+
 pub struct Config {
     pub rpc_url: String,
     pub keypair_path: PathBuf,
     pub program_id: Pubkey,
+    pub vrf: OracleVrf,
 }
 
 impl Config {
@@ -24,10 +27,13 @@ impl Config {
             .parse::<Pubkey>()
             .context("PROGRAM_ID is not a valid pubkey")?;
 
+        let vrf = OracleVrf::from_env()?;
+
         Ok(Self {
             rpc_url,
             keypair_path,
             program_id,
+            vrf,
         })
     }
 }
