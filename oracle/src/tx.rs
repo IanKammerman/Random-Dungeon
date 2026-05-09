@@ -45,8 +45,12 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
         Ok(sig)
     }
 
-    pub async fn send_reveal(&self, commit_state: &CommitState) -> Result<Signature> {
-        let ix = self.build_reveal_instruction(commit_state.salt);
+    pub async fn send_reveal(
+        &self,
+        commit_state: &CommitState,
+        manifest_hash: [u8; 32],
+    ) -> Result<Signature> {
+        let ix = self.build_reveal_instruction(commit_state.salt, manifest_hash);
         let blockhash = self.rpc.get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
             &[ix],
@@ -56,19 +60,6 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
         );
         let sig = self.rpc.send_and_confirm_transaction(&tx).await?;
         Ok(sig)
-    }
-
-    pub fn build_reveal_instruction(&self, seed: [u8; 32]) -> Instruction {
-        let accounts = randomness_beacon::accounts::OracleReveal {
-            oracle: self.payer.pubkey(),
-            epoch_state: self.epoch_state_address,
-        };
-        let ix_data = randomness_beacon::instruction::OracleReveal { seed };
-        Instruction {
-            program_id: self.program_id,
-            accounts: accounts.to_account_metas(None),
-            data: ix_data.data(),
-        }
     }
 
     pub async fn send_finalize(&self, vrf_output: &VrfOutput) -> Result<Signature> {
@@ -90,6 +81,22 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
             epoch_state: self.epoch_state_address,
         };
         let ix_data = randomness_beacon::instruction::OracleCommit { commitment };
+        Instruction {
+            program_id: self.program_id,
+            accounts: accounts.to_account_metas(None),
+            data: ix_data.data(),
+        }
+    }
+
+    pub fn build_reveal_instruction(&self, salt: [u8; 32], manifest_hash: [u8; 32]) -> Instruction {
+        let accounts = randomness_beacon::accounts::OracleReveal {
+            oracle: self.payer.pubkey(),
+            epoch_state: self.epoch_state_address,
+        };
+        let ix_data = randomness_beacon::instruction::OracleReveal {
+            salt,
+            manifest_hash,
+        };
         Instruction {
             program_id: self.program_id,
             accounts: accounts.to_account_metas(None),
@@ -189,15 +196,16 @@ mod tests {
     }
 
     #[test]
-    fn build_reveal_instruction_has_correct_accounts() {
+    fn build_reveal_instruction_encodes_salt_and_manifest_hash() {
         let payer = Keypair::new();
         let program_id = Pubkey::new_unique();
         let epoch_state = Pubkey::new_unique();
         let rpc = MockRpc;
 
         let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
-        let seed = [0xAA; 32];
-        let ix = builder.build_reveal_instruction(seed);
+        let salt = [0x12; 32];
+        let manifest_hash = [0x34; 32];
+        let ix = builder.build_reveal_instruction(salt, manifest_hash);
 
         assert_eq!(ix.program_id, program_id);
         assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
@@ -205,28 +213,17 @@ mod tests {
         assert!(ix.accounts[0].is_writable);
         assert_eq!(ix.accounts[1].pubkey, epoch_state);
         assert!(ix.accounts[1].is_writable);
-    }
 
-    #[test]
-    fn build_reveal_instruction_encodes_salt_in_data() {
-        let payer = Keypair::new();
-        let program_id = Pubkey::new_unique();
-        let epoch_state = Pubkey::new_unique();
-        let rpc = MockRpc;
-
-        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
-        let seed = [0xEE; 32];
-        let ix = builder.build_reveal_instruction(seed);
-
-        // Anchor ix data: 8-byte discriminator + 32-byte seed
-        assert_eq!(ix.data.len(), 8 + 32);
-        assert_eq!(&ix.data[8..], &seed);
+        let expected = randomness_beacon::instruction::OracleReveal {
+            salt,
+            manifest_hash,
+        }
+        .data();
+        assert_eq!(ix.data, expected);
     }
 
     #[tokio::test]
     async fn send_reveal_calls_rpc() {
-        use crate::epoch::CommitState;
-
         let payer = Keypair::new();
         let program_id = Pubkey::new_unique();
         let epoch_state = Pubkey::new_unique();
@@ -235,9 +232,12 @@ mod tests {
         let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
         let commit_state = CommitState {
             epoch_id: 1,
-            salt: [0xFF; 32],
+            salt: [0x12; 32],
         };
-        let sig = builder.send_reveal(&commit_state).await.unwrap();
+        let sig = builder
+            .send_reveal(&commit_state, [0x34; 32])
+            .await
+            .unwrap();
         assert_eq!(sig, Signature::default());
     }
 

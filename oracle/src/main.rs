@@ -1,10 +1,13 @@
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
+use solana_sdk::signature::{read_keypair_file, Keypair};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+use oracle::entropy::seed::{archive, build_entropy_bundle};
 use oracle::epoch::{CommitState, EpochMonitor};
 use oracle::rpc::SolanaRpc;
 use oracle::tx::TxBuilder;
@@ -43,11 +46,9 @@ async fn main() -> Result<()> {
 async fn cmd_run() -> Result<()> {
     let cfg = oracle::config::Config::from_env()?;
 
-    let keypair_bytes = std::fs::read(&cfg.keypair_path)
-        .with_context(|| format!("failed to read keypair from {:?}", cfg.keypair_path))?;
-    let payer = Keypair::from_bytes(&keypair_bytes).context("invalid keypair bytes")?;
-
-    let rpc = SolanaRpc::new(&cfg, Keypair::from_bytes(&keypair_bytes)?);
+    let payer = read_oracle_keypair(&cfg.keypair_path)?;
+    let rpc_payer = read_oracle_keypair(&cfg.keypair_path)?;
+    let rpc = SolanaRpc::new(&cfg, rpc_payer);
 
     let epoch_id = std::env::var("EPOCH_ID")
         .context("EPOCH_ID not set")?
@@ -70,11 +71,9 @@ async fn cmd_run() -> Result<()> {
 async fn cmd_commit_once() -> Result<()> {
     let cfg = oracle::config::Config::from_env()?;
 
-    let keypair_bytes = std::fs::read(&cfg.keypair_path)
-        .with_context(|| format!("failed to read keypair from {:?}", cfg.keypair_path))?;
-    let payer = Keypair::from_bytes(&keypair_bytes).context("invalid keypair bytes")?;
-
-    let rpc = SolanaRpc::new(&cfg, Keypair::from_bytes(&keypair_bytes)?);
+    let payer = read_oracle_keypair(&cfg.keypair_path)?;
+    let rpc_payer = read_oracle_keypair(&cfg.keypair_path)?;
+    let rpc = SolanaRpc::new(&cfg, rpc_payer);
 
     let epoch_id = std::env::var("EPOCH_ID")
         .context("EPOCH_ID not set")?
@@ -115,10 +114,25 @@ async fn cmd_commit_once() -> Result<()> {
     info!(epoch_id, "waiting for reveal phase");
     monitor.wait_for_phase(EpochPhase::Reveal).await?;
 
-    info!(epoch_id, "epoch is in reveal phase, submitting salt");
-    let sig = tx_builder.send_reveal(&commit_state).await?;
+    info!(epoch_id, "building entropy bundle");
+    let bundle = build_entropy_bundle(epoch_id).await?;
+    archive(&bundle, Path::new("oracle/archive"))?;
 
-    info!(%sig, "oracle_reveal transaction confirmed");
+    let sig = tx_builder
+        .send_reveal(&commit_state, bundle.manifest_hash)
+        .await?;
+
+    info!(
+        %sig,
+        manifest_hash = %hex::encode(bundle.manifest_hash),
+        seed = %hex::encode(oracle::epoch::oracle_seed(&commit_state.salt, &bundle.manifest_hash)),
+        "oracle_reveal transaction confirmed"
+    );
 
     Ok(())
+}
+
+fn read_oracle_keypair(path: &Path) -> Result<Keypair> {
+    read_keypair_file(path)
+        .map_err(|err| anyhow::anyhow!("failed to read keypair from {:?}: {err}", path))
 }
