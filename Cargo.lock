@@ -3749,6 +3749,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "clap 4.5.60",
  "futures",
  "hex",
  "proc-macro2",

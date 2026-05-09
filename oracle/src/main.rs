@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use tracing::{info, warn};
@@ -9,12 +10,54 @@ use oracle::rpc::SolanaRpc;
 use oracle::tx::TxBuilder;
 use randomness_beacon::EpochPhase;
 
+#[derive(Parser)]
+#[command(about = "Random Dungeon oracle service")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Long-running service that monitors epochs and submits commit/reveal (default)
+    Run,
+    /// Single-pass: commit and reveal for one epoch, then exit
+    CommitOnce,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    let cli = Cli::parse();
+    let command = cli.command.unwrap_or(Command::Run);
+
+    match command {
+        Command::Run => cmd_run().await,
+        Command::CommitOnce => cmd_commit_once().await,
+    }
+}
+
+async fn cmd_run() -> Result<()> {
+    let cfg = oracle::config::Config::from_env()?;
+
+    let keypair_bytes = std::fs::read(&cfg.keypair_path)
+        .with_context(|| format!("failed to read keypair from {:?}", cfg.keypair_path))?;
+    let payer = Keypair::from_bytes(&keypair_bytes).context("invalid keypair bytes")?;
+
+    let rpc = SolanaRpc::new(&cfg, Keypair::from_bytes(&keypair_bytes)?);
+
+    let epoch_id = std::env::var("EPOCH_ID")
+        .context("EPOCH_ID not set")?
+        .parse::<u64>()
+        .context("EPOCH_ID is not a valid u64")?;
+
+    oracle::runner::run_loop(&rpc, &payer, cfg.program_id, epoch_id).await
+}
+
+async fn cmd_commit_once() -> Result<()> {
     let cfg = oracle::config::Config::from_env()?;
 
     let keypair_bytes = std::fs::read(&cfg.keypair_path)

@@ -3,5 +3,6 @@ pub mod entropy;
 pub mod epoch;
 pub mod error;
 pub mod rpc;
+pub mod runner;
 pub mod tx;
 pub mod vrf;
