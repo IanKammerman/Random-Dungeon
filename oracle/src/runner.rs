@@ -14,7 +14,7 @@
 //      PROGRAM_ID=9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9 \
 //      ORACLE_VRF_SECRET=0x... \
 //      EPOCH_ID=1 \
-//      cargo run -p oracle -- run
+//      cargo run -p oracle --bin oracle -- run
 //
 // 5. Observe logs: the oracle should detect phases, commit, wait, reveal, then
 //    generate a proof and submit finalize_epoch.
@@ -54,18 +54,21 @@ pub enum Action {
 pub fn decide_action(
     phase: Option<EpochPhase>,
     has_committed: bool,
+    has_revealed: bool,
     has_finalized: bool,
 ) -> Action {
     match phase {
         Some(EpochPhase::Commit) => {
-            if has_committed {
+            if has_committed || has_revealed {
                 Action::Idle
             } else {
                 Action::SendCommit
             }
         }
         Some(EpochPhase::Reveal) => {
-            if has_committed {
+            if has_revealed {
+                Action::Idle
+            } else if has_committed {
                 Action::SendReveal
             } else {
                 Action::WaitForNextEpoch
@@ -100,6 +103,7 @@ pub async fn run_loop<R: RpcProvider>(
     let tx_builder = TxBuilder::new(rpc, payer, program_id, epoch_state_address);
 
     let mut commit_state: Option<CommitState> = None;
+    let mut has_revealed = false;
     let mut has_finalized = false;
 
     info!(epoch_id, "oracle service started, monitoring epoch");
@@ -127,7 +131,7 @@ pub async fn run_loop<R: RpcProvider>(
             }
         };
 
-        let action = decide_action(phase, commit_state.is_some(), has_finalized);
+        let action = decide_action(phase, commit_state.is_some(), has_revealed, has_finalized);
 
         match action {
             Action::SendCommit => {
@@ -182,6 +186,7 @@ pub async fn run_loop<R: RpcProvider>(
                     Ok(Ok(sig)) => {
                         info!(%sig, "oracle_reveal confirmed");
                         commit_state = None;
+                        has_revealed = true;
                     }
                     Ok(Err(e)) => {
                         error!(error = %e, "failed to send reveal, will retry");
@@ -228,7 +233,21 @@ pub async fn run_loop<R: RpcProvider>(
                 }
             }
             Action::WaitForNextEpoch => {
-                if commit_state.is_none() && phase.is_some() && phase != Some(EpochPhase::Closed) {
+                if phase == Some(EpochPhase::Closed) {
+                    if let Some(state) = monitor.read_epoch_state().await? {
+                        if !state.is_finalized {
+                            anyhow::bail!(
+                                "epoch {} closed before oracle finalized it",
+                                epoch_id
+                            );
+                        }
+                    }
+                }
+                if commit_state.is_none()
+                    && !has_revealed
+                    && phase.is_some()
+                    && phase != Some(EpochPhase::Closed)
+                {
                     warn!(
                         epoch_id,
                         "missed this epoch's commit window, waiting for next epoch"
@@ -256,7 +275,7 @@ mod tests {
     #[test]
     fn commit_phase_no_prior_commit_sends_commit() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Commit), false, false),
+            decide_action(Some(EpochPhase::Commit), false, false, false),
             Action::SendCommit
         );
     }
@@ -264,7 +283,7 @@ mod tests {
     #[test]
     fn commit_phase_already_committed_idles() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Commit), true, false),
+            decide_action(Some(EpochPhase::Commit), true, false, false),
             Action::Idle
         );
     }
@@ -272,15 +291,23 @@ mod tests {
     #[test]
     fn reveal_phase_with_commit_sends_reveal() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Reveal), true, false),
+            decide_action(Some(EpochPhase::Reveal), true, false, false),
             Action::SendReveal
+        );
+    }
+
+    #[test]
+    fn reveal_phase_after_reveal_idles() {
+        assert_eq!(
+            decide_action(Some(EpochPhase::Reveal), false, true, false),
+            Action::Idle
         );
     }
 
     #[test]
     fn reveal_phase_without_commit_waits_for_next_epoch() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Reveal), false, false),
+            decide_action(Some(EpochPhase::Reveal), false, false, false),
             Action::WaitForNextEpoch
         );
     }
@@ -288,11 +315,11 @@ mod tests {
     #[test]
     fn finalize_phase_not_yet_finalized_sends_finalize() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Finalize), false, false),
+            decide_action(Some(EpochPhase::Finalize), false, false, false),
             Action::SendFinalize
         );
         assert_eq!(
-            decide_action(Some(EpochPhase::Finalize), true, false),
+            decide_action(Some(EpochPhase::Finalize), true, false, false),
             Action::SendFinalize
         );
     }
@@ -300,11 +327,11 @@ mod tests {
     #[test]
     fn finalize_phase_already_finalized_idles() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Finalize), false, true),
+            decide_action(Some(EpochPhase::Finalize), false, false, true),
             Action::Idle
         );
         assert_eq!(
-            decide_action(Some(EpochPhase::Finalize), true, true),
+            decide_action(Some(EpochPhase::Finalize), true, false, true),
             Action::Idle
         );
     }
@@ -312,18 +339,24 @@ mod tests {
     #[test]
     fn closed_phase_waits_for_next_epoch() {
         assert_eq!(
-            decide_action(Some(EpochPhase::Closed), false, false),
+            decide_action(Some(EpochPhase::Closed), false, false, false),
             Action::WaitForNextEpoch
         );
         assert_eq!(
-            decide_action(Some(EpochPhase::Closed), true, false),
+            decide_action(Some(EpochPhase::Closed), true, false, false),
             Action::WaitForNextEpoch
         );
     }
 
     #[test]
     fn no_epoch_waits_for_next_epoch() {
-        assert_eq!(decide_action(None, false, false), Action::WaitForNextEpoch);
-        assert_eq!(decide_action(None, true, false), Action::WaitForNextEpoch);
+        assert_eq!(
+            decide_action(None, false, false, false),
+            Action::WaitForNextEpoch
+        );
+        assert_eq!(
+            decide_action(None, true, false, false),
+            Action::WaitForNextEpoch
+        );
     }
 }

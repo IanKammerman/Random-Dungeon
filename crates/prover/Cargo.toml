@@ -10,6 +10,7 @@ ark-ff = { workspace = true }
 ark-groth16 = { workspace = true }
 ark-serialize = { workspace = true }
 clap = { workspace = true }
+hex = { workspace = true }
 rand = { workspace = true }
 serde_json = { workspace = true }
 vrf-circuit = { path = "../vrf-circuit" }

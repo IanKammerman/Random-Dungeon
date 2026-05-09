@@ -2,6 +2,28 @@
 
 This is the manual validation path for a local validator demo. It is written as a checklist because the full commit -> reveal -> finalize flow depends on local validator state, generated proving artifacts, and the oracle keypair.
 
+For the full scripted path, run:
+
+```bash
+./scripts/local-demo.sh
+```
+
+The script writes a timestamped log under `target/local-demo-logs/` and prints
+the failing command plus the validator log tail if anything exits nonzero. It
+starts a local validator only when one is not already running at
+`SOLANA_RPC_URL`. If the script starts the validator, it stops it on exit unless
+you run with `KEEP_VALIDATOR=1`. If `ORACLE_VRF_SECRET` is unset or still set
+to a placeholder like `0x...`, the script uses a local demo secret.
+
+Before building, the script runs `anchor keys sync` so the compiled
+`declare_id!`, `Anchor.toml`, and local deploy keypair all agree. It restores
+the source files on exit by default, so this local-only id sync does not stay in
+your working tree. This also restores the tracked generated verifying-key
+source after local artifact generation. Set `RESTORE_ANCHOR_KEYS=0` if you
+intentionally want to keep those local generated source changes. During deploy,
+the script also parses the actual program id printed by `anchor deploy` and
+uses that id for epoch initialization and oracle transactions.
+
 ## Prerequisites
 
 Install and select the expected toolchain:
@@ -50,6 +72,12 @@ Start the validator in one terminal:
 solana-test-validator --reset
 ```
 
+Generate local proving artifacts:
+
+```bash
+cargo run -p setup -- local-random
+```
+
 Build and deploy in another terminal:
 
 ```bash
@@ -57,28 +85,38 @@ anchor build --no-idl
 anchor deploy
 ```
 
-Generate local proving artifacts:
-
-```bash
-cargo run -p setup -- local-random
-```
-
 ## Epoch Setup
 
-Initialize an epoch with the oracle wallet as the authority. The current repository exposes the instruction on-chain; if there is not yet a CLI wrapper, use an Anchor client/script or test harness to call:
+Initialize an epoch with the oracle wallet as the authority. First read the
+current validator slot:
 
-```text
-initialize_epoch(epoch_id, commit_deadline_slot, reveal_deadline_slot, finalize_deadline_slot)
+```bash
+CURRENT_SLOT=$(solana slot --url "$SOLANA_RPC_URL")
+echo "$CURRENT_SLOT"
 ```
 
-Use deadline slots far enough apart to give the oracle process time to commit, gather entropy, reveal, prove, and finalize.
+Choose deadline slots far enough apart to give the oracle process time to
+commit, gather entropy, reveal, prove, and finalize. For a local demo, offsets
+of roughly 200 / 450 / 750 slots are comfortable:
+
+```bash
+cargo run -p oracle --bin oracle -- init-epoch \
+  --epoch-id "$EPOCH_ID" \
+  --commit-deadline-slot $((CURRENT_SLOT + 200)) \
+  --reveal-deadline-slot $((CURRENT_SLOT + 450)) \
+  --finalize-deadline-slot $((CURRENT_SLOT + 750))
+```
+
+The command prints the `initialize_epoch` signature and the epoch PDA after
+confirmation. If the local validator has advanced far past your chosen slots,
+rerun `solana slot` and initialize a fresh epoch id with later deadlines.
 
 ## Commit And Reveal
 
 Run the oracle:
 
 ```bash
-cargo run -p oracle
+cargo run -p oracle --bin oracle -- run
 ```
 
 Expected behavior:
@@ -91,11 +129,11 @@ Expected behavior:
 
 ## Finalize
 
-Generate a proof using the stored epoch seed as the alpha input. The current prover accepts string alpha input, so a finalize wrapper should pass the exact seed bytes or a stable hex representation and then submit:
-
-```text
-finalize_epoch(vrf_output, proof_solana.bin, public_inputs_solana.json)
-```
+The oracle `run` command continues into finalize phase. It reads the stored
+epoch seed, calls the prover with `ORACLE_VRF_SECRET`, checks the generated
+public inputs, and submits `finalize_epoch`. The oracle passes the epoch seed to
+the prover with `--alpha-hex` so the proof binds to the raw on-chain seed bytes,
+not a UTF-8 hex string.
 
 Manual checks after finalization:
 
@@ -107,7 +145,5 @@ Manual checks after finalization:
 
 ## Known Gaps
 
-- The oracle binary currently automates commit and reveal, not finalize.
-- The finalize wrapper still needs to bridge `ORACLE_VRF_SECRET`, prover artifacts, and on-chain transaction submission.
 - Participant commit/reveal remains optional MVP work.
 - A production demo should archive or pin the entropy manifest outside the local filesystem.

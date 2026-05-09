@@ -4080,6 +4080,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "clap 4.5.60",
  "groth16-solana",
+ "hex",
  "rand 0.8.6",
  "serde_json",
  "vrf-circuit",

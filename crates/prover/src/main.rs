@@ -5,7 +5,7 @@ use ark_bn254::{g1::G1Affine, g2::G2Affine, Bn254, Fq, Fr};
 use ark_ff::{BigInteger, PrimeField};
 use ark_groth16::{Groth16, Proof, ProvingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use rand::rngs::OsRng;
 use std::ops::Neg;
 use vrf_circuit::VrfCircuit;
@@ -13,11 +13,18 @@ use vrf_core::{compute_vrf, fr_from_hex, PublicInputs};
 
 #[derive(Debug, Parser)]
 #[command(about = "Generate a Groth16 proof for the MVP VRF computation")]
+#[command(group(
+    ArgGroup::new("alpha_input")
+        .required(true)
+        .args(["alpha", "alpha_hex"])
+))]
 struct Cli {
     #[arg(long)]
     sk: String,
-    #[arg(long)]
-    alpha: String,
+    #[arg(long, conflicts_with = "alpha_hex")]
+    alpha: Option<String>,
+    #[arg(long = "alpha-hex", conflicts_with = "alpha")]
+    alpha_hex: Option<String>,
     #[arg(long, default_value = "artifacts/proving_key.bin")]
     proving_key: PathBuf,
     #[arg(long, default_value = "artifacts/proof.bin")]
@@ -41,9 +48,10 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let sk = parse_secret(&cli.sk)?;
+    let alpha = parse_alpha_bytes(&cli)?;
     prove_to_files(
         sk,
-        cli.alpha.as_bytes(),
+        &alpha,
         &cli.proving_key,
         &cli.proof,
         &cli.public_inputs,
@@ -59,6 +67,17 @@ fn parse_secret(input: &str) -> Result<Fr> {
     }
     let value = input.parse::<u64>().context("secret key must be a u64 decimal or 0x hex field element")?;
     Ok(Fr::from(value))
+}
+
+fn parse_alpha_bytes(cli: &Cli) -> Result<Vec<u8>> {
+    if let Some(alpha_hex) = &cli.alpha_hex {
+        let hex = alpha_hex.strip_prefix("0x").unwrap_or(alpha_hex);
+        if hex.len() % 2 != 0 {
+            anyhow::bail!("alpha-hex must contain an even number of hex digits");
+        }
+        return hex::decode(hex).context("alpha-hex must be valid hex bytes");
+    }
+    Ok(cli.alpha.as_deref().unwrap_or_default().as_bytes().to_vec())
 }
 
 fn prove_to_files(
@@ -180,6 +199,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_alpha_bytes_uses_literal_string_alpha() {
+        let cli = test_cli(Some("0x1234"), None);
+        assert_eq!(parse_alpha_bytes(&cli).unwrap(), b"0x1234");
+    }
+
+    #[test]
+    fn parse_alpha_bytes_decodes_alpha_hex() {
+        let cli = test_cli(None, Some("0x1234"));
+        assert_eq!(parse_alpha_bytes(&cli).unwrap(), vec![0x12, 0x34]);
+    }
+
+    #[test]
     fn prover_creates_proof_and_public_inputs() {
         let dir = temp_dir("ecvrf-prover-test");
         let _ = fs::remove_dir_all(&dir);
@@ -256,5 +287,19 @@ mod tests {
             prefix,
             std::process::id()
         ))
+    }
+
+    fn test_cli(alpha: Option<&str>, alpha_hex: Option<&str>) -> Cli {
+        Cli {
+            sk: "12345".to_string(),
+            alpha: alpha.map(str::to_string),
+            alpha_hex: alpha_hex.map(str::to_string),
+            proving_key: PathBuf::from("artifacts/proving_key.bin"),
+            proof: PathBuf::from("artifacts/proof.bin"),
+            public_inputs: PathBuf::from("artifacts/public_inputs.json"),
+            solana_proof: PathBuf::from("artifacts/proof_solana.bin"),
+            solana_public_inputs: PathBuf::from("artifacts/public_inputs_solana.json"),
+            solana_public_inputs_bin: PathBuf::from("artifacts/public_inputs_solana.bin"),
+        }
     }
 }

@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use tracing::{info, warn};
@@ -24,6 +26,17 @@ struct Cli {
 enum Command {
     /// Long-running service that monitors epochs and submits commit/reveal (default)
     Run,
+    /// Initialize one epoch account with this wallet as the oracle authority
+    InitEpoch {
+        #[arg(long)]
+        epoch_id: u64,
+        #[arg(long)]
+        commit_deadline_slot: u64,
+        #[arg(long)]
+        reveal_deadline_slot: u64,
+        #[arg(long)]
+        finalize_deadline_slot: u64,
+    },
     /// Single-pass: commit and reveal for one epoch, then exit
     CommitOnce,
 }
@@ -39,8 +52,67 @@ async fn main() -> Result<()> {
 
     match command {
         Command::Run => cmd_run().await,
+        Command::InitEpoch {
+            epoch_id,
+            commit_deadline_slot,
+            reveal_deadline_slot,
+            finalize_deadline_slot,
+        } => {
+            cmd_init_epoch(
+                epoch_id,
+                commit_deadline_slot,
+                reveal_deadline_slot,
+                finalize_deadline_slot,
+            )
+            .await
+        }
         Command::CommitOnce => cmd_commit_once().await,
     }
+}
+
+async fn cmd_init_epoch(
+    epoch_id: u64,
+    commit_deadline_slot: u64,
+    reveal_deadline_slot: u64,
+    finalize_deadline_slot: u64,
+) -> Result<()> {
+    ensure_deadlines_ordered(
+        commit_deadline_slot,
+        reveal_deadline_slot,
+        finalize_deadline_slot,
+    )?;
+
+    let (rpc_url, keypair_path, program_id) = read_basic_env()?;
+    let payer = read_oracle_keypair(&keypair_path)?;
+    let rpc_payer = read_oracle_keypair(&keypair_path)?;
+    let rpc = SolanaRpc {
+        client: RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed()),
+        payer: rpc_payer,
+        program_id,
+    };
+
+    let (epoch_state_address, _bump) =
+        Pubkey::find_program_address(&[b"epoch", &epoch_id.to_le_bytes()], &program_id);
+    let tx_builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state_address);
+    let sig = tx_builder
+        .send_initialize_epoch(
+            epoch_id,
+            commit_deadline_slot,
+            reveal_deadline_slot,
+            finalize_deadline_slot,
+        )
+        .await?;
+
+    info!(
+        %sig,
+        %epoch_state_address,
+        epoch_id,
+        commit_deadline_slot,
+        reveal_deadline_slot,
+        finalize_deadline_slot,
+        "initialize_epoch transaction confirmed"
+    );
+    Ok(())
 }
 
 async fn cmd_run() -> Result<()> {
@@ -135,4 +207,34 @@ async fn cmd_commit_once() -> Result<()> {
 fn read_oracle_keypair(path: &Path) -> Result<Keypair> {
     read_keypair_file(path)
         .map_err(|err| anyhow::anyhow!("failed to read keypair from {:?}: {err}", path))
+}
+
+fn read_basic_env() -> Result<(String, PathBuf, Pubkey)> {
+    let rpc_url = std::env::var("SOLANA_RPC_URL").context("SOLANA_RPC_URL not set")?;
+    let keypair_path = std::env::var("ORACLE_KEYPAIR_PATH")
+        .map(PathBuf::from)
+        .context("ORACLE_KEYPAIR_PATH not set")?;
+    let program_id = std::env::var("PROGRAM_ID")
+        .context("PROGRAM_ID not set")?
+        .parse::<Pubkey>()
+        .context("PROGRAM_ID is not a valid pubkey")?;
+    Ok((rpc_url, keypair_path, program_id))
+}
+
+fn ensure_deadlines_ordered(
+    commit_deadline_slot: u64,
+    reveal_deadline_slot: u64,
+    finalize_deadline_slot: u64,
+) -> Result<()> {
+    if !(commit_deadline_slot < reveal_deadline_slot
+        && reveal_deadline_slot < finalize_deadline_slot)
+    {
+        anyhow::bail!(
+            "deadline slots must satisfy commit < reveal < finalize, got {} < {} < {}",
+            commit_deadline_slot,
+            reveal_deadline_slot,
+            finalize_deadline_slot
+        );
+    }
+    Ok(())
 }

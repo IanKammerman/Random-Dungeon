@@ -28,7 +28,7 @@ pub async fn run_finalize<R: RpcProvider>(
     let output = Command::new(prover_binary)
         .arg("--sk")
         .arg(vrf_secret_hex)
-        .arg("--alpha")
+        .arg("--alpha-hex")
         .arg(&alpha_hex)
         .arg("--proving-key")
         .arg(proving_key_path)

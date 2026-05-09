@@ -4,6 +4,7 @@ use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
+use solana_sdk::system_program;
 use solana_sdk::transaction::Transaction;
 
 use crate::epoch::CommitState;
@@ -34,6 +35,30 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
 
     pub async fn send_commit(&self, commitment: [u8; 32]) -> Result<Signature> {
         let ix = self.build_commit_instruction(commitment);
+        let blockhash = self.rpc.get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&self.payer.pubkey()),
+            &[self.payer],
+            blockhash,
+        );
+        let sig = self.rpc.send_and_confirm_transaction(&tx).await?;
+        Ok(sig)
+    }
+
+    pub async fn send_initialize_epoch(
+        &self,
+        epoch_id: u64,
+        commit_deadline_slot: u64,
+        reveal_deadline_slot: u64,
+        finalize_deadline_slot: u64,
+    ) -> Result<Signature> {
+        let ix = self.build_initialize_epoch_instruction(
+            epoch_id,
+            commit_deadline_slot,
+            reveal_deadline_slot,
+            finalize_deadline_slot,
+        );
         let blockhash = self.rpc.get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
             &[ix],
@@ -81,6 +106,31 @@ impl<'a, R: RpcProvider> TxBuilder<'a, R> {
             epoch_state: self.epoch_state_address,
         };
         let ix_data = randomness_beacon::instruction::OracleCommit { commitment };
+        Instruction {
+            program_id: self.program_id,
+            accounts: accounts.to_account_metas(None),
+            data: ix_data.data(),
+        }
+    }
+
+    pub fn build_initialize_epoch_instruction(
+        &self,
+        epoch_id: u64,
+        commit_deadline_slot: u64,
+        reveal_deadline_slot: u64,
+        finalize_deadline_slot: u64,
+    ) -> Instruction {
+        let accounts = randomness_beacon::accounts::InitializeEpoch {
+            authority: self.payer.pubkey(),
+            epoch_state: self.epoch_state_address,
+            system_program: system_program::ID,
+        };
+        let ix_data = randomness_beacon::instruction::InitializeEpoch {
+            epoch_id,
+            commit_deadline_slot,
+            reveal_deadline_slot,
+            finalize_deadline_slot,
+        };
         Instruction {
             program_id: self.program_id,
             accounts: accounts.to_account_metas(None),
@@ -192,6 +242,49 @@ mod tests {
         let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
         let commitment = [0xDD; 32];
         let sig = builder.send_commit(commitment).await.unwrap();
+        assert_eq!(sig, Signature::default());
+    }
+
+    #[test]
+    fn build_initialize_epoch_instruction_encodes_accounts_and_deadlines() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let ix = builder.build_initialize_epoch_instruction(7, 100, 200, 300);
+
+        assert_eq!(ix.program_id, program_id);
+        assert_eq!(ix.accounts[0].pubkey, payer.pubkey());
+        assert!(ix.accounts[0].is_signer);
+        assert!(ix.accounts[0].is_writable);
+        assert_eq!(ix.accounts[1].pubkey, epoch_state);
+        assert!(ix.accounts[1].is_writable);
+        assert_eq!(ix.accounts[2].pubkey, system_program::ID);
+
+        let expected = randomness_beacon::instruction::InitializeEpoch {
+            epoch_id: 7,
+            commit_deadline_slot: 100,
+            reveal_deadline_slot: 200,
+            finalize_deadline_slot: 300,
+        }
+        .data();
+        assert_eq!(ix.data, expected);
+    }
+
+    #[tokio::test]
+    async fn send_initialize_epoch_calls_rpc() {
+        let payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        let epoch_state = Pubkey::new_unique();
+        let rpc = MockRpc;
+
+        let builder = TxBuilder::new(&rpc, &payer, program_id, epoch_state);
+        let sig = builder
+            .send_initialize_epoch(7, 100, 200, 300)
+            .await
+            .unwrap();
         assert_eq!(sig, Signature::default());
     }
 
