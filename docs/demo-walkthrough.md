@@ -2,7 +2,9 @@
 
 This is the manual validation path for a local validator demo. It is written as a checklist because the full commit -> reveal -> finalize flow depends on local validator state, generated proving artifacts, and the oracle keypair.
 
-For the full scripted path, run:
+For the teammate-facing scripted demo guide, see
+[`docs/local-demo-review.md`](local-demo-review.md). For the full scripted path,
+run:
 
 ```bash
 ./scripts/local-demo.sh

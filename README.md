@@ -35,7 +35,7 @@ The Anchor program in `programs/randomness-beacon` owns the epoch state and enfo
 
 The Rust oracle in `oracle/` watches a configured epoch PDA through `SOLANA_RPC_URL`. In run mode it reads the epoch state, submits the commit, waits for reveal phase, builds an entropy bundle, archives the raw responses under `oracle/archive/<epoch>/`, and submits the reveal.
 
-The finalize path depends on the prover artifacts and VRF secret. The current prover path is documented in `docs/snark-vrf-integration.md`; a full local demo checklist is in `docs/demo-walkthrough.md`.
+The finalize path depends on the prover artifacts and VRF secret. The current prover path is documented in `docs/snark-vrf-integration.md`; the teammate-facing local demo review guide is in `docs/local-demo-review.md`, with a manual checklist in `docs/demo-walkthrough.md`.
 
 ### Entropy Sources
 
@@ -82,10 +82,10 @@ Solana gives this design cheap, low-latency verification and a natural account m
 - Canonical entropy manifest and seed derivation.
 - Local Groth16 setup, prover, verifier client, and on-chain verifier path.
 - Local validator demo walkthrough.
+- Fully scripted local demo from validator startup through finalization.
 
 ### Realistic Target
 
-- Fully scripted local demo from validator startup through finalization.
 - Unignored end-to-end oracle integration test.
 - Durable archive for entropy manifests and raw source payloads.
 - Clear operational docs for devnet deployment.
@@ -168,6 +168,16 @@ cargo test -p prover
 cargo test -p verifier-client
 cargo test -p oracle
 ```
+
+For the full local end-to-end demo, use the teammate review guide:
+
+```bash
+unset ORACLE_VRF_SECRET
+unset EPOCH_ID
+./scripts/local-demo.sh
+```
+
+Expected success lines include `oracle_commit confirmed`, `oracle_reveal confirmed`, `finalize_epoch confirmed`, and `[OK] Epoch <id> completed successfully.` See `docs/local-demo-review.md` for what each step is doing and what to inspect.
 
 ## Related Work
 
