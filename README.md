@@ -4,6 +4,8 @@
 
 Random Dungeon is a Solana randomness beacon that combines a commit-reveal oracle, external entropy samples, and a Groth16-verified VRF-style computation. The on-chain program records epoch state, enforces timing and oracle authority, verifies the proof, and stores the finalized beacon output for downstream consumers.
 
+**Live on Solana devnet:** [`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet) (deployed 2026-05-10) — see [`web/public/deploy.json`](web/public/deploy.json) and the visualizer's hero badge. Current overall status: [`STATUS.md`](STATUS.md).
+
 **Team:** Tony Fields, Ian Kammerman, Cathy Zhang
 **Course:** COMS 4995 - Sciences of Blockchain
 
@@ -124,9 +126,14 @@ solana-keygen new --outfile ~/.config/solana/id.json --no-bip39-passphrase
 Copy `.env.example` to `.env` and set:
 
 ```text
+# Local validator (use scripts/local-demo.sh for the scripted local path):
 SOLANA_RPC_URL=http://localhost:8899
 ORACLE_KEYPAIR_PATH=~/.config/solana/id.json
-PROGRAM_ID=9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9
+PROGRAM_ID=<from `anchor keys list` after build>
+# Or, to run against the live devnet deploy:
+# SOLANA_RPC_URL=https://api.devnet.solana.com
+# PROGRAM_ID=2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH
+
 EPOCH_ID=1
 ORACLE_VRF_SECRET=0x...
 PROVER_BINARY_PATH=target/release/prover
