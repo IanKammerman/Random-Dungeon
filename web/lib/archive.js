@@ -50,6 +50,27 @@ export async function loadSnarkInputs() {
   return fetchJson("public/snark/public_inputs.json");
 }
 
+// Optional sidecar: which epoch's seed was used as alpha for the proof.
+// Returns null if not present (older deployments) so the UI can degrade.
+export async function loadSnarkMeta() {
+  try {
+    return await fetchJson("public/snark/snark_meta.json");
+  } catch {
+    return null;
+  }
+}
+
+// On-chain deploy info, written by `scripts/deploy-devnet.sh`. May be a
+// placeholder with `status: "pending"` until a teammate runs the script
+// with a funded wallet. Returns null if the file is missing entirely.
+export async function loadDeployInfo() {
+  try {
+    return await fetchJson("public/deploy.json");
+  } catch {
+    return null;
+  }
+}
+
 // ----- per-source headline statistics, computed from real archive data -----
 
 export function btcStat(btcJson) {

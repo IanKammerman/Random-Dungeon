@@ -64,10 +64,11 @@ ceremony/transcripts/*
 /oracle/archive/
 target/deploy/*-keypair.json
 
-# Web visualizer — committed archive snapshots and SNARK public inputs.
-# (`*.json` is ignored globally above; whitelist these so the static site
-# has data to read.)
+# Web visualizer — committed archive snapshots, SNARK public inputs, and
+# devnet deploy info. (`*.json` is ignored globally above; whitelist these
+# so the static site has data to read.)
 !web/public/archives/**/*.json
 !web/public/snark/*.json
+!web/public/deploy.json
 
 .claude/
