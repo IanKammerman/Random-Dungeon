@@ -72,3 +72,5 @@ target/deploy/*-keypair.json
 # has data to read.)
 !web/public/archives/**/*.json
 !web/public/snark/*.json
+
+.claude/
