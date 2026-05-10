@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 pub mod verifier;
 
-declare_id!("9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9");
+declare_id!("2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH");
 
 #[program]
 pub mod randomness_beacon {

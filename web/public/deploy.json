@@ -1,12 +1,13 @@
 {
-  "program_id": null,
-  "cluster": null,
-  "rpc_url": null,
-  "deploy_signature": null,
-  "deployed_at": null,
-  "deployer": null,
-  "explorer_program_url": null,
-  "explorer_tx_url": null,
-  "status": "pending",
-  "note": "Run scripts/deploy-devnet.sh from a funded devnet wallet to populate this file. Built program id (from target/deploy/randomness_beacon-keypair.json) is 5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx; that becomes the on-chain program id when deployed."
+  "program_id": "2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH",
+  "cluster": "devnet",
+  "rpc_url": "https://api.devnet.solana.com",
+  "deploy_tx": "4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk",
+  "deploy_signature": "4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk",
+  "deployed_at": "2026-05-10T12:08:15Z",
+  "deployer": "e5hGi4s4aSADChGq3kGbL7n4hWESYW8qgD5cSMzsj3s",
+  "explorer_url": "https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet",
+  "explorer_program_url": "https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet",
+  "explorer_tx_url": "https://explorer.solana.com/tx/4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk?cluster=devnet",
+  "status": "deployed"
 }

@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-randomness_beacon = "9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9"
+randomness_beacon = "2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH"
 
 [registry]
 url = "https://api.apr.dev"
