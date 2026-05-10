@@ -54,17 +54,25 @@ Create a local wallet if one does not exist:
 solana-keygen new --outfile ~/.config/solana/id.json --no-bip39-passphrase
 ```
 
-Export the local environment:
+Export the local environment. `PROGRAM_ID` should be whatever `anchor keys
+list` reports for `randomness_beacon` after the local build (it'll match
+the keypair at `target/deploy/randomness_beacon-keypair.json`):
 
 ```bash
 export SOLANA_RPC_URL=http://localhost:8899
 export ORACLE_KEYPAIR_PATH=~/.config/solana/id.json
-export PROGRAM_ID=9Trpfw7P4YzbaaRQYDS5fmnsAGie5JLQ1FjcgzgJfDq9
+export PROGRAM_ID=$(anchor keys list | awk '/^randomness_beacon:/ {print $2}')
 export EPOCH_ID=1
 export ORACLE_VRF_SECRET=0x...
 export PROVER_BINARY_PATH=target/release/prover
 export PROVING_KEY_PATH=artifacts/proving_key.bin
 ```
+
+> To run against the live **devnet** deploy instead, set
+> `SOLANA_RPC_URL=https://api.devnet.solana.com` and
+> `PROGRAM_ID=2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`. You'll also
+> need the deploy wallet's keypair at `ORACLE_KEYPAIR_PATH` (or another
+> wallet registered as the oracle for the target epoch).
 
 ## Validator And Program
 

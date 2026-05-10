@@ -8,6 +8,9 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
+The hero badge links to the live program on Solana devnet:
+[`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet).
+
 ## What it shows
 
 - The four entropy sources (USGS, NWS, BTC, drand) for each archived epoch
@@ -23,7 +26,9 @@ python3 -m http.server 8000
     3. `alpha_hash = SHA256(epoch_seed) reduced mod r == published alpha_hash?`
        — binds the displayed Groth16 proof to a real archived epoch.
 - An on-chain deployment block that reads `web/public/deploy.json` and shows
-  the program id + cluster + Solana Explorer link once the program is deployed.
+  the program id + cluster + Solana Explorer link. The committed
+  `deploy.json` points at the live devnet deploy (program id
+  `2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`).
 
 ## Files served
 
@@ -34,7 +39,7 @@ web/
     archives/{1,2,3}/{btc,drand,nws,usgs,manifest}.json
     snark/public_inputs.json   ← Groth16 public inputs [alpha_hash, beta]
     snark/snark_meta.json      ← which epoch's seed was used as alpha
-    deploy.json                ← devnet deploy info (placeholder until deploy)
+    deploy.json                ← live devnet deploy info (program id, tx, explorer URL)
 ```
 
 ## Refreshing archive data
@@ -72,17 +77,23 @@ The proof is locally verifiable with `cargo run -p verifier-client --release`.
 
 ## Devnet deployment
 
-The visualizer reads `web/public/deploy.json` to render the program id +
-explorer link. The committed file is a placeholder; populate it by running:
+The visualizer reads `web/public/deploy.json` to render the hero "Deployed ·
+devnet" badge and the on-chain deployment block. The committed file points
+at the current live deploy:
+
+| | |
+|---|---|
+| program id | [`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet) |
+| deploy tx | [`4x1XfeAJ…RV9AKEk`](https://explorer.solana.com/tx/4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk?cluster=devnet) |
+| deployed at | 2026-05-10 12:08:15 UTC |
+
+To push an upgrade or re-deploy from a fresh deploy keypair, run:
 
 ```bash
-scripts/deploy-devnet.sh
+SKIP_AIRDROP=1 scripts/deploy-devnet.sh
 ```
 
-The script configures solana CLI for devnet, ensures the deploy wallet is
-funded (with airdrop fallback), generates the Groth16 verifying-key constants,
-builds the Anchor program, deploys it, and writes a populated `deploy.json`
-into this directory. See the script's header comment for environment
-variables and exit codes. After a successful deploy, refresh the static site
-and the hero badge will switch from "Devnet deploy pending" to a clickable
-"Deployed · devnet" link.
+after funding `$(solana address)` via https://faucet.solana.com/ — see
+[`docs/deploy-devnet-guide.md`](../docs/deploy-devnet-guide.md). The script
+is idempotent: re-running upgrades the program in place and rewrites
+`deploy.json` with the new tx + timestamp.

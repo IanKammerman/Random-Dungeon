@@ -1,5 +1,12 @@
 # Deploying `randomness_beacon` to Solana devnet — step-by-step
 
+> ✅ **Status:** the program is **already deployed on devnet** at
+> [`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet)
+> (deployed 2026-05-10). The visualizer's hero badge already links to it.
+> This guide remains as the runbook for **re-deploys, upgrades, or fresh
+> deploys from a different keypair** — re-running it pushes a buffer-based
+> upgrade in place and rewrites `web/public/deploy.json` with the new tx.
+
 **Audience:** the teammate who's actually going to run the deploy.
 **Time:** 15–25 minutes including faucet waits.
 **Cost:** $0. Devnet SOL has no monetary value and the faucets are free.
@@ -11,8 +18,7 @@
 
 You need:
 
-- A clone of the repo on the `mvp-final-prep` branch (or whatever branch PR
-  #8 has been merged into).
+- A clone of the repo on `main` (or a feature branch off `main`).
 - `solana` CLI installed (`solana --version` should print something).
 - `anchor` CLI installed (`anchor --version` should print something). The
   build expects whatever version `Anchor.toml` pins — don't upgrade it.
@@ -28,7 +34,7 @@ docs first. Don't try to do this without them.
 ## 1. Get on the right branch
 
 ```bash
-git checkout mvp-final-prep
+git checkout main
 git pull
 ```
 
@@ -129,20 +135,22 @@ You should see a file around 234 KB. If the build fails, stop and ask the
 team — don't try to fix it yourself, and definitely don't deploy a build
 that completed with warnings you don't understand.
 
-Also verify the program ID matches what the team expects:
+Also check the program ID your local build will publish at:
 
 ```bash
 anchor keys list
 ```
 
-Look for a line like:
-```
-randomness_beacon: 5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx
-```
+You'll see a line like `randomness_beacon: <pubkey>`. The currently-deployed
+program is at
+[`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet).
 
-If the pubkey is **different**, stop. That means the program keypair on
-your machine isn't the one the team committed to, and deploying would
-publish the program at the wrong address. Ask before continuing.
+- **Same pubkey?** Great — `anchor deploy` will push an upgrade in place.
+- **Different pubkey?** That's expected on a fresh checkout where you've
+  generated your own deploy keypair. You'll be deploying a *new* program
+  at *your* address; that's fine for a re-run, but the visualizer's
+  `web/public/deploy.json` will get overwritten to point at the new one.
+  If that's not what you want, ask before continuing.
 
 ---
 
@@ -175,11 +183,14 @@ re-run the same command. The script picks up where it left off.
 
 ## 7. Verify the deploy on the Explorer
 
-Open the URL the script printed — it'll look like:
+Open the URL the script printed. For the current live program it's:
 
 ```
-https://explorer.solana.com/address/5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx?cluster=devnet
+https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet
 ```
+
+(If you deployed a fresh program from your own keypair, the URL will use
+your program id instead — `cat web/public/deploy.json | jq -r .explorer_url`.)
 
 You should see:
 - The program account.
@@ -206,9 +217,8 @@ python3 -m http.server 8000
 ```
 
 Open http://localhost:8000 in a browser. The hero badge at the top should
-now read **"Deployed · devnet"** as a clickable link (instead of the
-"Devnet deploy pending" state). Click it — it should open the Explorer
-page from step 7.
+read **"Deployed · devnet"** as a clickable link. Click it — it should
+open the Explorer page from step 7.
 
 Stop the server with Ctrl-C.
 
@@ -216,14 +226,28 @@ Stop the server with Ctrl-C.
 
 ## 9. Commit and push
 
+`anchor keys sync` (which the script runs as part of the build) rewrites
+`programs/randomness-beacon/src/lib.rs` (`declare_id!`) and `Anchor.toml`
+to match your deploy keypair. **Commit those rewrites alongside
+`web/public/deploy.json`** — otherwise the program won't recompile at the
+deployed address later.
+
 ```bash
-git add web/public/deploy.json
+git add web/public/deploy.json \
+        programs/randomness-beacon/src/lib.rs \
+        Anchor.toml \
+        artifacts/verifying_key_solana.rs
 git commit -m "deploy: publish randomness_beacon to devnet"
 git push
 ```
 
-Open a PR into `mvp-final-prep` (or merge directly if the team is
-comfortable — it's one file).
+`artifacts/verifying_key_solana.rs` is included because the script may
+have regenerated it (only on first deploy or when `FORCE_SETUP=1`); on
+re-deploys with the existing artifacts it'll be unchanged and the `git
+add` is a no-op.
+
+Open a PR into `main` (or merge directly if the team is comfortable —
+the deploy commit on May 10 was a direct push by Cathy).
 
 ---
 
@@ -231,8 +255,8 @@ comfortable — it's one file).
 
 Drop a message like:
 
-> Deployed to devnet. Program ID `5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx`,
-> explorer link in `web/public/deploy.json`. Visualizer hero badge is live.
+> Deployed to devnet. Program ID `<from web/public/deploy.json>`, explorer
+> link in the visualizer hero badge. New deploy tx: `<tx>`.
 
 You're done.
 
@@ -249,4 +273,4 @@ You're done.
 | `anchor keys list` shows a different program ID | Wrong program keypair locally | Stop, ping the team — do not deploy |
 | `anchor deploy` says "insufficient funds" mid-deploy | Ran out of SOL | Top up via faucet, re-run the script (idempotent) |
 | Deploy stalls > 3 min | Network hiccup | Ctrl-C, re-run with `SKIP_AIRDROP=1` |
-| Visualizer still shows "deploy pending" | Browser cache, or `deploy.json` not written | Hard-refresh the page; if still broken, `cat web/public/deploy.json` to confirm it exists |
+| Visualizer still shows "deploy pending" | Browser cache, or `deploy.json` reverted to placeholder | Hard-refresh the page; if still broken, `cat web/public/deploy.json` to confirm `program_id` is non-null and `status: "deployed"` |

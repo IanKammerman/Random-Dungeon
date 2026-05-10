@@ -2,14 +2,22 @@
 
 ## Headline
 
-**MVP is feature-complete and tested. The only remaining task is a
-~15-minute manual ops step to deploy the program to Solana devnet.** All
-code, scripts, and visualizer plumbing for that deploy already exist and
-are validated; the blocker is purely getting devnet SOL into a deploy
-wallet via the public faucet, which is free but rate-limited from shared
-network IPs.
+**MVP is complete and deployed on Solana devnet.** All code, scripts, and
+visualizer plumbing are merged into `main`. The on-chain program is live
+at the address below; the visualizer's hero badge links straight to its
+Solana Explorer page.
 
-This document supersedes the May 9 status doc.
+| | |
+|---|---|
+| **Program ID** | [`2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`](https://explorer.solana.com/address/2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH?cluster=devnet) |
+| **Cluster** | devnet |
+| **Deploy tx** | [`4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk`](https://explorer.solana.com/tx/4x1XfeAJHU1kQF6XJDx8vjdkvthaddMLq4Uivww9nTA3NeBmusQTgiSKsv62FWmxNWSceGjHjL584JSxsRV9AKEk?cluster=devnet) |
+| **Deployed at** | 2026-05-10 12:08:15 UTC |
+| **Deployer** | `e5hGi4s4aSADChGq3kGbL7n4hWESYW8qgD5cSMzsj3s` |
+
+The exact deploy info is committed in [`web/public/deploy.json`](web/public/deploy.json) and is what the visualizer reads to render the "Deployed · devnet" badge.
+
+This document supersedes earlier status docs.
 
 ---
 
@@ -17,7 +25,7 @@ This document supersedes the May 9 status doc.
 
 ### On-chain program (`programs/randomness-beacon`)
 
-The Anchor program is feature-complete for the MVP. It implements:
+Deployed. Anchor program is feature-complete for the MVP:
 
 | Instruction | Behavior |
 |---|---|
@@ -60,9 +68,10 @@ BN254 Groth16 pipeline:
 - `prover`: produces a 256-byte Solana proof (`-A || B || C`) and 64-byte public inputs (`alpha_hash || beta`).
 - `verifier-client`: local Arkworks verification.
 - `programs/randomness-beacon/src/verifier.rs`: on-chain Groth16
-  verification via groth16-solana.
+  verification via groth16-solana, **now running on devnet** behind program
+  id `2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH`.
 
-### Static visualizer (`web/`) — merged via PR #5, extended by PR #8
+### Static visualizer (`web/`)
 
 Single-page no-build site at `python3 -m http.server` from `web/`:
 
@@ -76,83 +85,25 @@ Single-page no-build site at `python3 -m http.server` from `web/`:
   - `SHA256(domain || "seed" || manifest_hash) == archived seed`
   - `manifest_hash` re-derived from per-source canonical hashes (full
     reproducibility chain)
-  - **(PR #8)** `alpha_hash = SHA256(epoch_seed)` reduced mod r ==
-    published `alpha_hash`
-- **(PR #8)** On-chain deployment block + hero badge that read
-  `web/public/deploy.json` (program id + Solana Explorer link, or
-  "deploy pending" status).
+  - `alpha_hash = SHA256(epoch_seed)` reduced mod r == published `alpha_hash`
+- **On-chain deployment block + hero badge** that read
+  `web/public/deploy.json` and link to the live program on Solana
+  Explorer (badge: "Deployed · devnet").
 
 ### Demo + tooling
 
 - `scripts/local-demo.sh` — end-to-end local validator demo (validator →
-  deploy → init epoch → commit → reveal → finalize), already on `main`.
+  deploy → init epoch → commit → reveal → finalize).
+- `scripts/deploy-devnet.sh` — idempotent devnet deploy script. Already
+  used to land the live program; rerun it to push an upgrade.
 - `docs/local-demo-review.md` and `docs/demo-walkthrough.md` cover manual
-  + scripted demo paths.
-- **(PR #8)** `scripts/deploy-devnet.sh` — idempotent devnet deploy script
-  that mirrors local-demo's structure but targets devnet, with airdrop
-  fallback and writes a populated `web/public/deploy.json` for the
-  visualizer.
+  + scripted local demo paths.
+- `docs/deploy-devnet-guide.md` — step-by-step for the manually-funded
+  faucet path used to ship the live deploy.
 
 ---
 
-## What's not done — and why
-
-### Devnet deployment ⚠️ blocked on a funded wallet (only remaining MVP gap)
-
-The script (`scripts/deploy-devnet.sh`) is written, syntax-checked, and the
-build/key-resolution path is validated:
-
-- `anchor build --no-idl` produces `target/deploy/randomness_beacon.so` (234 KB).
-- `anchor keys list` resolves `randomness_beacon: 5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx`.
-- That program id will be the deployed id (anchor uses the deploy keypair
-  pubkey).
-
-**The blocker:** devnet airdrop is rate-limited from the network the
-previous attempt ran from. `solana airdrop` returned `airdrop request
-failed` on `api.devnet.solana.com`, `devnet.solana.com`, and Ankr (auth
-required).
-
-**Decision: stay on devnet, do not switch to testnet.** Testnet is
-primarily for Solana validator/protocol-upgrade testing, gets reset
-aggressively, and has the same kind of faucet rate limiting. The
-"deployed on devnet" Explorer link is the convention graders/audiences
-expect for a Solana smart-contract demo.
-
-**Resolution path (Path 1 — recommended):**
-
-1. A teammate signs in to https://faucet.solana.com/ with a GitHub account
-   that has some history. The signed-in limit is much higher than
-   anonymous.
-2. They paste the deploy wallet pubkey (`solana address`) and request 2
-   SOL. Repeat until balance ≥ 4 SOL.
-3. They run `SKIP_AIRDROP=1 scripts/deploy-devnet.sh` from a checkout of
-   `mvp-final-prep`.
-4. They commit the resulting `web/public/deploy.json`.
-
-**Backup paths if Path 1 stalls:**
-
-- **Alternate faucets:** DevnetFaucet.org (separate rate-limit pool), or
-  QuickNode/Alchemy free-tier faucets which require a free dev account
-  signup.
-- **Personal RPC for the airdrop:** sign up for a free Helius or QuickNode
-  devnet endpoint and run the airdrop against that URL via
-  `solana config set --url <url>`. Bypasses the shared-IP rate-limit
-  bucket.
-- **Use a pre-funded wallet:** if anyone already has devnet SOL in an old
-  keypair, run with
-  `DEPLOY_KEYPAIR_PATH=/path/to/funded-keypair.json SKIP_AIRDROP=1 scripts/deploy-devnet.sh`.
-
-**Cost: $0 across all paths.** Devnet SOL has no monetary value and all
-faucets/RPCs listed above are free for this volume of use.
-
-Once deployed, the script auto-writes `web/public/deploy.json` with the
-program id + explorer URL, and the visualizer's hero badge flips from
-"Devnet deploy pending" to a clickable "Deployed · devnet" link.
-
-See `docs/deploy-devnet-guide.md` (or the standalone teammate guide) for
-the step-by-step.
-
-### Stretch goals deferred (not MVP-blocking)
+## What's not done — stretch goals deferred (not MVP-blocking)
 
 Per the slack thread consensus and the README's milestone list:
 
@@ -169,39 +120,55 @@ Per the slack thread consensus and the README's milestone list:
   `oracle/archive/<epoch>/` writes to local filesystem; auditors need
   access to the archive directly.
 - **Anchor 0.31+ upgrade** to drop the `--no-idl` workaround: deferred.
+- **Mainnet deploy:** out of scope for this MVP. Would require a real
+  ceremony plus a separate deploy keypair and SOL.
 
 ---
 
-## Branches and PRs right now
+## What's left for the writeup / submission
 
-- `main` — latest is `ee749f1`. Has the full local-validator demo working
-  end-to-end.
-- `mvp-final-prep` — branch created from `main`, target for the current
-  iteration.
-- `claude/sleepy-wescoff-eb67a3` — feature branch with the three MVP
-  fixes (deploy script, alpha_hash binding, refreshed SNARK).
-- **PR #8** → targets `mvp-final-prep`. Contains the deploy script, the
-  alpha_hash binding check, the deploy-info section in the visualizer,
-  and the regenerated SNARK proof.
-- PR #7 was the same content but targeted at `main`; closed. Commits are
-  preserved in PR #8 against `mvp-final-prep`.
+These are non-code tasks for finishing the deliverable:
+
+1. **(Optional, recommended)** Run `scripts/local-demo.sh` and capture
+   the commit→reveal→finalize cycle. Screenshot the visualizer's hero
+   badge and the Explorer page for the program account.
+2. **(Optional)** Run a finalize round against the *deployed* devnet
+   program (`SOLANA_RPC_URL=https://api.devnet.solana.com cargo run -p
+   oracle --bin oracle -- run` with appropriate env per
+   `docs/demo-walkthrough.md`) to demonstrate end-to-end execution on a
+   real cluster. This produces an on-chain finalized epoch the writeup
+   can link to.
+3. **Writeup.** Reference the program-id Explorer link above, the
+   architecture in this doc, the live visualizer, and the test
+   coverage (`cargo test -p oracle --lib` + the prover/verifier crate
+   tests).
+
+Everything else for MVP is done, deployed, and tested.
 
 ---
 
-## What ships the MVP from here
+## Branches and PRs (history)
 
-1. **(Code-side, optional)** Run the Claude Code sanity-check prompt to
-   validate `scripts/deploy-devnet.sh` defaults (especially that
-   `MIN_DEVNET_SOL` is 4, not 2, and that `SKIP_AIRDROP=1` is honored).
-   If it makes any fixes, merge them into `mvp-final-prep`.
-2. **(Ops, ~15–25 min)** A teammate fund the deploy wallet via
-   https://faucet.solana.com/ (GitHub login → 2× 2 SOL → ≥ 4 SOL total),
-   then runs `SKIP_AIRDROP=1 scripts/deploy-devnet.sh`. Full step-by-step
-   in the teammate deployment guide.
-3. **(Ops, 1 min)** Commit the resulting `web/public/deploy.json` so the
-   visualizer's "Deployed · devnet" badge is live.
-4. **(Optional)** Run `scripts/local-demo.sh` and screenshot/record the
-   commit→reveal→finalize cycle for the writeup.
-5. **(Final)** Merge `mvp-final-prep` → `main`.
+- `main` — latest is `c76db46` ("deployed on devnet"). Has the full
+  end-to-end deploy.
+- `mvp-final-prep` — feature integration branch; merged into `main` via
+  PR #10 ahead of the deploy commit.
+- PRs #5, #7, #8, #9 — visualizer + deploy-script + audit-fix PRs,
+  all merged.
 
-Everything else for MVP is done and tested.
+## Reproducibility
+
+To reproduce the deploy from a fresh checkout:
+
+```bash
+git clone https://github.com/IanKammerman/Random-Dungeon
+cd Random-Dungeon
+# follow docs/deploy-devnet-guide.md, OR:
+SKIP_AIRDROP=1 scripts/deploy-devnet.sh   # after funding $(solana address)
+```
+
+Note: `anchor deploy` will publish at *your* deploy keypair's address,
+which differs from `2sUazVqcMp31TW5iGKKvEoKM5J8oZGNGf29YDahp2WHH` unless
+you ship the same keypair. The deploy script handles `anchor keys sync`
+automatically and writes the new program id into
+`web/public/deploy.json`.
