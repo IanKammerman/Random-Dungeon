@@ -18,9 +18,11 @@
 #                        authority)
 #   ANCHOR_BUILD_OPTS    extra flags for `anchor build` (default: --no-idl)
 #   MIN_DEVNET_SOL       minimum SOL balance before deploying (default 4).
-#                        Devnet airdrops cap at 2 SOL per request, so 4 SOL
-#                        comfortably covers the deploy cost (~3 SOL for a
-#                        ~600KB program at current rent).
+#                        Rule of thumb for a ~234 KB program: ~3.5 SOL
+#                        rent-exempt for the program account + ~0.5 SOL
+#                        slack for tx fees and the buffer account. Devnet
+#                        airdrops cap at 2 SOL per request, so two
+#                        airdrops (or two faucet hits) get you there.
 #   SKIP_AIRDROP         set to 1 to skip the airdrop attempt.
 #   SKIP_BUILD           set to 1 to reuse target/deploy/*.so from a prior
 #                        build (faster reruns).
@@ -89,7 +91,25 @@ echo "[INFO] Current balance: ${current_balance} SOL (need >= ${MIN_DEVNET_SOL})
 
 if (( $(echo "$current_balance < $MIN_DEVNET_SOL" | bc -l) )); then
   if [[ "$SKIP_AIRDROP" == "1" ]]; then
-    fail "Balance below threshold and SKIP_AIRDROP=1 set" 2
+    cat <<EOF >&2
+
+[FAIL] Deploy wallet is underfunded and SKIP_AIRDROP=1 was set.
+       wallet pubkey   : $DEPLOY_PUBKEY
+       current balance : ${current_balance} SOL
+       required        : ${MIN_DEVNET_SOL} SOL (set MIN_DEVNET_SOL=N to override)
+
+       To top up:
+         1. Open https://faucet.solana.com/ and sign in with GitHub.
+         2. Paste $DEPLOY_PUBKEY into the address field, request 2 SOL.
+         3. Repeat until 'solana balance --url $SOLANA_RPC_URL' shows >= ${MIN_DEVNET_SOL} SOL.
+         4. Re-run: SKIP_AIRDROP=1 scripts/deploy-devnet.sh
+
+       Alternatives if the faucet is rate-limited:
+         - Backup faucet: https://faucet.quicknode.com/solana/devnet
+         - Use a pre-funded keypair:
+             DEPLOY_KEYPAIR_PATH=/path/to/funded.json SKIP_AIRDROP=1 scripts/deploy-devnet.sh
+EOF
+    fail "Insufficient devnet SOL on $DEPLOY_PUBKEY (have ${current_balance}, need ${MIN_DEVNET_SOL})" 2
   fi
   step "Airdropping SOL on devnet (devnet caps at 2 SOL per request)"
   airdrop_attempts=0
@@ -114,11 +134,25 @@ EOF
   done
 fi
 
-step "Generating Groth16 proving + verifying artifacts (local-random)"
-# Required so artifacts/verifying_key_solana.rs is fresh before the build
-# bakes those constants into the program. local-random is dev-only — see
-# README "Security Considerations".
-cargo run -p setup -- local-random
+step "Ensuring Groth16 proving + verifying artifacts exist"
+# `cargo run -p setup -- local-random` regenerates a fresh trusted setup
+# and overwrites artifacts/verifying_key_solana.rs. If we did that on every
+# run, an "upgrade" deploy would publish a program with different VK
+# constants than the one being upgraded — silently invalidating any proofs
+# the oracle had already produced against the old VK. So: on re-runs we
+# reuse the existing artifacts. To force a fresh setup, set FORCE_SETUP=1
+# (typically only when the circuit itself has changed).
+if [[ "${FORCE_SETUP:-0}" == "1" ]] \
+   || [[ ! -f "$ROOT_DIR/artifacts/proving_key.bin" ]] \
+   || [[ ! -f "$ROOT_DIR/artifacts/verifying_key.bin" ]] \
+   || [[ ! -f "$ROOT_DIR/artifacts/verifying_key_solana.rs" ]]; then
+  echo "[INFO] Generating fresh Groth16 artifacts (local-random)"
+  echo "[INFO] local-random is dev-only — see README 'Security Considerations'"
+  cargo run -p setup -- local-random
+else
+  echo "[INFO] Reusing existing artifacts/{proving_key.bin,verifying_key.bin,verifying_key_solana.rs}"
+  echo "[INFO] Set FORCE_SETUP=1 to regenerate (rotates the on-chain verifying key)"
+fi
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   step "Building Anchor program ($ANCHOR_BUILD_OPTS)"
@@ -167,16 +201,24 @@ fi
 
 step "Writing web/public/deploy.json for the visualizer"
 mkdir -p "$ROOT_DIR/web/public"
+# Field naming: `explorer_url` and `deploy_tx` are the canonical short
+# names; `explorer_program_url`, `explorer_tx_url`, and `deploy_signature`
+# are kept as aliases the existing visualizer reads. Re-running this
+# script overwrites the file with a fresh `deployed_at` and `deploy_tx`,
+# which is what `idempotent` means here.
 cat > "$ROOT_DIR/web/public/deploy.json" <<EOF
 {
   "program_id": "${PROGRAM_ID}",
   "cluster": "devnet",
   "rpc_url": "${SOLANA_RPC_URL}",
+  "deploy_tx": "${DEPLOY_SIG}",
   "deploy_signature": "${DEPLOY_SIG}",
   "deployed_at": "${DEPLOY_TIMESTAMP}",
   "deployer": "${DEPLOY_PUBKEY}",
+  "explorer_url": "${EXPLORER_PROGRAM_URL}",
   "explorer_program_url": "${EXPLORER_PROGRAM_URL}",
-  "explorer_tx_url": "${EXPLORER_TX_URL}"
+  "explorer_tx_url": "${EXPLORER_TX_URL}",
+  "status": "deployed"
 }
 EOF
 echo "[OK] Wrote web/public/deploy.json"
