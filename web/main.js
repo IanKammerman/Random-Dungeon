@@ -4,6 +4,8 @@ import {
   listEpochs,
   loadEpoch,
   loadSnarkInputs,
+  loadSnarkMeta,
+  loadDeployInfo,
   btcStat,
   drandStat,
   usgsStat,
@@ -73,12 +75,16 @@ const state = {
   epochs: [],
   current: null, // loaded epoch object
   snark: null,
+  snarkMeta: null,
+  deployInfo: null,
   selectedStage: "sources",
 };
 
 async function main() {
   state.epochs = await listEpochs();
   state.snark = await loadSnarkInputs();
+  state.snarkMeta = await loadSnarkMeta();
+  state.deployInfo = await loadDeployInfo();
 
   const select = document.getElementById("epoch-select");
   for (const e of state.epochs) {
@@ -92,7 +98,8 @@ async function main() {
   });
 
   buildPipelineSvg();
-  renderSnark(state.snark);
+  renderSnark(state.snark, state.snarkMeta, state.deployInfo);
+  renderDeployBadge(state.deployInfo);
 
   await selectEpoch(defaultEpoch);
 }
@@ -511,9 +518,23 @@ function renderVerifyCard(epoch) {
 
 // ---------- snark card ----------
 
-function renderSnark(snark) {
+function renderSnark(snark, snarkMeta, deployInfo) {
   const card = document.getElementById("snark-card");
   card.replaceChildren();
+
+  // Tag indicating which epoch's seed this proof was generated from.
+  if (snarkMeta && Number.isInteger(snarkMeta.alpha_epoch)) {
+    card.appendChild(
+      el("p", {
+        class: "snark-meta",
+        html:
+          `<span class="byte-tag">alpha = epoch ${snarkMeta.alpha_epoch} ${escapeHtml(snarkMeta.alpha_source || "seed")}</span> ` +
+          `This proof's <code>alpha</code> is the audit seed of epoch ${snarkMeta.alpha_epoch}. ` +
+          `The button below recomputes <code>alpha_hash = SHA256(seed) reduced mod r</code> in your browser ` +
+          `and checks that it matches the published <code>alpha_hash</code>.`,
+      }),
+    );
+  }
 
   const grid = el("div", { class: "kv-grid" });
   grid.appendChild(el("span", { class: "k", text: "alpha_hash" }));
@@ -526,6 +547,43 @@ function renderSnark(snark) {
   grid.appendChild(b);
   card.appendChild(grid);
 
+  // alpha_hash binding check: recompute alpha_hash from the named epoch's
+  // audit seed and compare against the snark's archived alpha_hash.
+  if (snarkMeta && Number.isInteger(snarkMeta.alpha_epoch)) {
+    const action = el("div", { class: "verify-action" });
+    const btn = el("button", { id: "verify-alpha-btn", text: "Recompute alpha_hash from epoch seed" });
+    const result = el("div", { class: "verify-result", id: "verify-alpha-result" });
+    btn.onclick = async () => {
+      result.replaceChildren(el("span", { text: "computing…" }));
+      try {
+        const epoch = await import("./lib/archive.js").then((m) => m.loadEpoch(snarkMeta.alpha_epoch));
+        const seedHex = (epoch.manifest.seed || "").replace(/^0x/, "");
+        const seed = hexToBytes(seedHex);
+        const sha = await sha256(seed);
+        const reduced = reduceModR(sha);
+        const computed = bytesToHex(reduced);
+        const archived = (snark.alpha_hash || "").replace(/^0x/, "");
+        const ok = computed === archived;
+        result.className = ok ? "verify-result ok" : "verify-result bad";
+        result.replaceChildren(
+          el("span", { class: "check", text: ok ? "✓" : "✗" }),
+          el("span", {
+            text: ok
+              ? `Match — proof's alpha_hash equals SHA256(epoch ${snarkMeta.alpha_epoch} seed) mod r.`
+              : `Mismatch — published alpha_hash does not match epoch ${snarkMeta.alpha_epoch}'s seed.`,
+          }),
+          el("span", { class: "computed", text: `computed: 0x${computed}` }),
+        );
+      } catch (e) {
+        result.className = "verify-result bad";
+        result.replaceChildren(el("span", { text: `error: ${(e && e.message) || e}` }));
+      }
+    };
+    action.appendChild(btn);
+    action.appendChild(result);
+    card.appendChild(action);
+  }
+
   card.appendChild(
     el("p", {
       class: "snark-foot",
@@ -533,6 +591,10 @@ function renderSnark(snark) {
         'Proof format: 256 bytes total, encoded as <code>-A || B || C</code> in BN254 byte format (A and C are 64-byte G1 points, B is a 128-byte G2 point). Public inputs: <code>[alpha_hash, beta]</code>.',
     }),
   );
+
+  // Deployment block.
+  card.appendChild(renderDeployInfo(deployInfo));
+
   card.appendChild(
     el("p", { class: "snark-foot" }, [
       el("a", {
@@ -540,11 +602,98 @@ function renderSnark(snark) {
         target: "_blank", rel: "noopener", text: "docs/snark-vrf-integration.md",
       }),
       el("a", {
-        href: "https://github.com/IanKammerman/Random-Dungeon/blob/main/crates/solana-program/src/verifier.rs",
-        target: "_blank", rel: "noopener", text: "crates/solana-program/src/verifier.rs",
+        href: "https://github.com/IanKammerman/Random-Dungeon/blob/main/programs/randomness-beacon/src/lib.rs",
+        target: "_blank", rel: "noopener", text: "programs/randomness-beacon/src/lib.rs",
+      }),
+      el("a", {
+        href: "https://github.com/IanKammerman/Random-Dungeon/blob/main/programs/randomness-beacon/src/verifier.rs",
+        target: "_blank", rel: "noopener", text: "programs/randomness-beacon/src/verifier.rs",
       }),
     ]),
   );
+}
+
+function renderDeployInfo(deployInfo) {
+  const wrap = el("div", { class: "deploy-card" });
+  wrap.appendChild(el("h3", { class: "deploy-h", text: "On-chain deployment" }));
+  if (!deployInfo || deployInfo.status === "pending" || !deployInfo.program_id) {
+    wrap.appendChild(
+      el("p", {
+        class: "snark-foot",
+        html:
+          `<span class="byte-tag deploy-pending">devnet deploy pending</span> ` +
+          `Run <code>scripts/deploy-devnet.sh</code> from a funded devnet wallet ` +
+          `to deploy the verifier and populate <code>web/public/deploy.json</code>. ` +
+          `The build resolves a stable program id from <code>target/deploy/randomness_beacon-keypair.json</code>; ` +
+          `the same id will be visible here after deploy.`,
+      }),
+    );
+    return wrap;
+  }
+  const grid = el("div", { class: "kv-grid" });
+  grid.appendChild(el("span", { class: "k", text: "program_id" }));
+  const v = el("span", { class: "v" });
+  v.appendChild(hashChip(deployInfo.program_id));
+  grid.appendChild(v);
+  grid.appendChild(el("span", { class: "k", text: "cluster" }));
+  grid.appendChild(el("span", { class: "v", text: deployInfo.cluster || "—" }));
+  if (deployInfo.deployed_at) {
+    grid.appendChild(el("span", { class: "k", text: "deployed_at" }));
+    grid.appendChild(el("span", { class: "v", text: deployInfo.deployed_at }));
+  }
+  if (deployInfo.deployer) {
+    grid.appendChild(el("span", { class: "k", text: "deployer" }));
+    const dv = el("span", { class: "v" });
+    dv.appendChild(hashChip(deployInfo.deployer));
+    grid.appendChild(dv);
+  }
+  wrap.appendChild(grid);
+  const links = el("p", { class: "snark-foot" });
+  if (deployInfo.explorer_program_url) {
+    links.appendChild(el("a", {
+      href: deployInfo.explorer_program_url,
+      target: "_blank", rel: "noopener", text: "view program on Solana Explorer",
+    }));
+  }
+  if (deployInfo.explorer_tx_url) {
+    links.appendChild(el("a", {
+      href: deployInfo.explorer_tx_url,
+      target: "_blank", rel: "noopener", text: "view deploy tx",
+    }));
+  }
+  if (links.children.length) wrap.appendChild(links);
+  return wrap;
+}
+
+function renderDeployBadge(deployInfo) {
+  const target = document.querySelector(".badges");
+  if (!target) return;
+  if (!deployInfo || deployInfo.status === "pending" || !deployInfo.program_id) {
+    target.appendChild(el("span", { class: "badge badge-pending", text: "Devnet deploy pending" }));
+    return;
+  }
+  const a = el("a", {
+    class: "badge badge-deployed",
+    href: deployInfo.explorer_program_url || "#",
+    target: "_blank", rel: "noopener",
+    title: deployInfo.program_id,
+    text: `Deployed · ${deployInfo.cluster || "devnet"}`,
+  });
+  target.appendChild(a);
+}
+
+// reduce a 32-byte BE integer mod the BN254 scalar field r.
+const BN254_R = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+function reduceModR(bytes) {
+  let v = 0n;
+  for (const b of bytes) v = (v << 8n) | BigInt(b);
+  v = v % BN254_R;
+  const out = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
 }
 
 main().catch((err) => {

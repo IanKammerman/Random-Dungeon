@@ -1,0 +1,12 @@
+{
+  "program_id": null,
+  "cluster": null,
+  "rpc_url": null,
+  "deploy_signature": null,
+  "deployed_at": null,
+  "deployer": null,
+  "explorer_program_url": null,
+  "explorer_tx_url": null,
+  "status": "pending",
+  "note": "Run scripts/deploy-devnet.sh from a funded devnet wallet to populate this file. Built program id (from target/deploy/randomness_beacon-keypair.json) is 5MMjTfc64Q9AC2rjVda1ZHH137TebNpdUzNhTMg7Vypx; that becomes the on-chain program id when deployed."
+}
