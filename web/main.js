@@ -341,7 +341,7 @@ function stageSources(epoch) {
   for (const s of [...epoch.manifest.sources].sort((a, b) => (a.name < b.name ? -1 : 1))) {
     grid.appendChild(el("span", { class: "k", text: `SHA256(${s.name}_canonical)` }));
     const v = el("span", { class: "v" });
-    v.appendChild(hashChip(s.canonical_hash, { title: "click to copy" }));
+    v.appendChild(hashChip(s.canonical_hash || "n/a", { title: "click to copy" }));
     grid.appendChild(v);
   }
   root.appendChild(grid);
