@@ -7,7 +7,7 @@ export async function listEpochs() {
   // Static hosting can't directory-list; we hardcode the known epoch ids
   // populated by `cargo run -p oracle --bin entropy_once`. To add a new
   // epoch, run the binary and append its number here.
-  return [1, 2, 3];
+  return [1, 2, 3, 4];
 }
 
 export async function loadEpoch(epoch) {
