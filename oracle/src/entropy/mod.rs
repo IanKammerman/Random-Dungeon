@@ -48,6 +48,8 @@ pub struct CanonicalSample {
 #[derive(Debug, Clone)]
 pub struct EntropyBundle {
     pub epoch: u64,
+    /// Timestamp (ms since unix epoch) baked into the manifest hash.
+    pub fetched_at_ms: i64,
     /// SHA256 of the manifest. Goes on-chain.
     pub manifest_hash: [u8; 32],
     /// The seed s_t. Input to the VRF.

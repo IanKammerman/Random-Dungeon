@@ -67,6 +67,7 @@ pub fn finalize(
 
     Ok(EntropyBundle {
         epoch,
+        fetched_at_ms,
         manifest_hash,
         seed,
         raw_samples,
@@ -97,14 +98,29 @@ pub fn archive(bundle: &EntropyBundle, archive_root: &Path) -> Result<()> {
 
     // Structured manifest record (for human / auditor consumption).
     let manifest_record = serde_json::json!({
+        "domain_tag": std::str::from_utf8(DOMAIN_TAG).unwrap_or("random-dungeon/entropy/v1"),
         "epoch": bundle.epoch,
+        "manifest_fetched_at_ms": bundle.fetched_at_ms,
         "manifest_hash": hex::encode(bundle.manifest_hash),
         "seed": hex::encode(bundle.seed),
-        "sources": bundle.raw_samples.iter().map(|r| serde_json::json!({
-            "name": r.source,
-            "endpoint": r.endpoint,
-            "fetched_at_ms": r.fetched_at_ms,
-        })).collect::<Vec<_>>(),
+        "sources": bundle.raw_samples.iter().map(|r| {
+            let canonical_hash = bundle.canonical_samples.iter()
+                .find(|c| c.source == r.source)
+                .map(|c| {
+                    let hash: [u8; 32] = Sha256::digest(&c.bytes).into();
+                    hex::encode(hash)
+                });
+            let canonical_len = bundle.canonical_samples.iter()
+                .find(|c| c.source == r.source)
+                .map(|c| c.bytes.len());
+            serde_json::json!({
+                "name": r.source,
+                "endpoint": r.endpoint,
+                "fetched_at_ms": r.fetched_at_ms,
+                "canonical_hash": canonical_hash,
+                "canonical_len": canonical_len,
+            })
+        }).collect::<Vec<_>>(),
     });
     let path = dir.join("manifest.json");
     std::fs::write(&path, serde_json::to_string_pretty(&manifest_record)?)
